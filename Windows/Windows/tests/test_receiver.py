@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 import unittest
+import tempfile
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlencode, urlparse
 from concurrent.futures import ThreadPoolExecutor
@@ -295,7 +296,7 @@ class ReceiverProtocolTests(unittest.TestCase):
         self.controller.sender = Mock(side_effect=OSError("input blocked"))
         status, _, body = self.command({"command": "C"})
         self.assertEqual(409, status)
-        self.assertEqual({"ok": False, "error": "input blocked"}, json.loads(body))
+        self.assertEqual({"ok": False, "error": "input blocked", "errorCode": "input_unavailable"}, json.loads(body))
         self.assertEqual(0, self.server.command_count)
 
     def test_watch_page_requires_no_javascript_and_escapes_messages(self):
@@ -425,6 +426,21 @@ class ReceiverProtocolTests(unittest.TestCase):
         self.assertEqual(401, self.request("POST", "/watch", form)[0])
         self.assertEqual([], self.calls)
 
+
+    def test_watch_language_defaults_english_and_keeps_chinese_actions(self):
+        _, _, english = self.request(path='/watch?token=test-token')
+        self.assertIn("lang='en'", english)
+        self.assertIn('Play / Pause', english)
+        self.assertIn("name='lang' value='en'", english)
+        _, _, chinese = self.request(path='/watch?token=test-token&lang=zh-CN')
+        self.assertIn("lang='zh-CN'", chinese)
+        self.assertIn('播放 / 暂停', chinese)
+        link = WatchLinks(chinese).links[0]
+        self.assertEqual(['zh-CN'], parse_qs(urlparse(link).query)['lang'])
+        status, headers, _ = self.request(path=link)
+        self.assertEqual(303, status)
+        self.assertEqual(['zh-CN'], parse_qs(urlparse(headers['Location']).query)['lang'])
+
     def test_unknown_paths_do_not_expose_files(self):
         for path in ("/receiver.py", "/../receiver.py", "/%2e%2e/receiver.py", "/config.json"):
             self.assertEqual(404, self.request(path=path)[0])
@@ -439,3 +455,17 @@ class ReceiverProtocolTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class PairingPersistenceTests(unittest.TestCase):
+    def test_settings_keep_pairing_key_across_restart_and_language_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(receiver, 'settings_path', return_value=Path(directory)/'config.json'):
+                first=receiver.load_settings()
+                self.assertGreaterEqual(len(first['token']),16)
+                token=first['token']
+                first['language']='zh-CN'
+                receiver.save_settings(first)
+                for _ in range(3):
+                    again=receiver.load_settings()
+                    self.assertEqual(token,again['token'])
+                    self.assertEqual('zh-CN',again['language'])

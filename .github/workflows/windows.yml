@@ -1,0 +1,51 @@
+name: Windows build and tests
+on:
+  push:
+    paths: ['Windows/Windows/**', 'LICENSE', 'THIRD_PARTY_LICENSES.txt', '.github/workflows/windows.yml']
+  pull_request:
+    paths: ['Windows/Windows/**', 'LICENSE', 'THIRD_PARTY_LICENSES.txt', '.github/workflows/windows.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install build dependencies
+        run: python -m pip install -r Windows/Windows/requirements-build.txt
+      - name: Test receiver and desktop settings
+        run: python -m unittest discover -s Windows/Windows/tests -v
+      - name: Test phone interface
+        run: node Windows/Windows/tests/frontend-smoke.cjs
+      - name: Capture the desktop demo
+        run: |
+          python Windows/Windows/app.py --demo --language en --screenshot docs/screenshots/windows-desktop.png
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath 'docs/screenshots/windows-desktop.png')) { throw 'Desktop demo screenshot was not captured.' }
+      - name: Build and verify executable
+        shell: powershell
+        run: |
+          $unicodeRoot = Join-Path $env:RUNNER_TEMP '手机鼠标-构建'
+          New-Item -ItemType Directory -Path $unicodeRoot -Force | Out-Null
+          Get-ChildItem -LiteralPath $env:GITHUB_WORKSPACE -Force | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $unicodeRoot -Recurse -Force }
+          & (Join-Path $unicodeRoot 'Windows\Windows\build.ps1')
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed in Unicode source path.' }
+          $output = Join-Path $env:GITHUB_WORKSPACE 'Windows\Windows\dist'
+          New-Item -ItemType Directory -Path $output -Force | Out-Null
+          Copy-Item -LiteralPath (Join-Path $unicodeRoot 'Windows\Windows\dist\WatchMouse-2.4.exe') -Destination $output -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WatchMouse-Windows
+          path: |
+            Windows/Windows/dist/WatchMouse-*.exe
+            docs/screenshots/windows-desktop.png
+          if-no-files-found: error

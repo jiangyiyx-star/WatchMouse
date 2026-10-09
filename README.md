@@ -1,55 +1,107 @@
-# 随手控 / WatchMouse
+# WatchMouse
 
-把手机变成 Windows 或 Mac 电脑的无线鼠标和键盘。手机与电脑连接同一 Wi-Fi，电脑打开应用，手机扫描二维码即可使用。
+**Turn your phone into a wireless mouse and keyboard for Windows and macOS.**
 
-## 使用
+[简体中文](README.zh-CN.md) · [Download](https://github.com/jiangyiyx-star/WatchMouse/releases/latest) · [Report an issue](https://github.com/jiangyiyx-star/WatchMouse/issues)
 
-1. 从 [v2.3 下载页](https://github.com/jiangyiyx-star/WatchMouse/releases/tag/v2.3) 下载 `WatchMouse-2.3.exe`。
-2. 关闭旧版本，再双击新版。应用自动启动接收服务，无需安装 Python。
-3. 手机扫描应用中的二维码，或刷新原来的遥控页面。
-4. 在电脑上选中要操作的窗口，再使用手机控制。
+![MIT License](https://img.shields.io/badge/license-MIT-green)
+![Windows and macOS](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue)
+[![Mac build](https://github.com/jiangyiyx-star/WatchMouse/actions/workflows/mac.yml/badge.svg)](https://github.com/jiangyiyx-star/WatchMouse/actions/workflows/mac.yml)
+[![Windows build](https://github.com/jiangyiyx-star/WatchMouse/actions/workflows/windows.yml/badge.svg)](https://github.com/jiangyiyx-star/WatchMouse/actions/workflows/windows.yml)
 
-初次连接如遇防火墙阻拦，点桌面应用中的“允许局域网连接”。更多说明见 [启动说明](启动说明.md)。
+Open the desktop receiver, scan its QR code with your phone, and control the focused app over your local Wi-Fi. No phone app or account is required.
 
-## Mac 版本
+## Screenshots
 
-从 [Mac 下载页](https://github.com/jiangyiyx-star/WatchMouse/releases/tag/v2.3-mac.2) 下载 `WatchMouse-Mac-2.3.1-arm64.zip`（Apple 芯片 Mac）。解压并将 `WatchMouse.app` 移到“应用程序”，以后从 `/Applications/WatchMouse.app` 启动。在“系统设置 → 隐私与安全性 → 辅助功能”中授权，再用手机扫码。使用时保持应用窗口打开；关闭窗口会停止接收服务。
+Screenshots show the actual interface using demo data. The displayed demo QR code and key cannot pair with a real receiver.
 
-Mac 版提供原生窗口、二维码、服务启停、中文输入和 Command 组合键。用户已确认辅助功能授权后，真实手机可以连接并控制 Mac。使用、首次启动与构建说明见 [Mac 开发说明](Mac/README.md)。实体 Apple Watch 尚未实测。
+| Phone trackpad | Phone keyboard | Language & connection |
+| --- | --- | --- |
+| <img src="docs/screenshots/phone-mouse.png" alt="English phone trackpad" width="260"> | <img src="docs/screenshots/phone-keyboard.png" alt="Phone keyboard and draft composer" width="260"> | <img src="docs/screenshots/phone-settings.png" alt="Language selection and saved pairing" width="260"> |
 
-## 三种模式
-
-- **抖音**：大号上一个、播放/暂停、下一个按钮。
-- **鼠标**：大触控板、左右键、拖动开关，右侧滚动带支持单指滑动。
-- **键鼠**：触控板加紧凑输入区，使用手机自己的键盘和语音输入法；文字确认后发送到电脑。
-
-横竖屏自动调整。连接入口是底部小圆点，鼠标速度也在连接设置中。手机键盘弹出时，触控区域按可用高度缩小。Apple Watch 提供 `/watch` 简版入口，真实手表兼容性待实测。
-
-| 鼠标 | 键鼠 |
+| macOS receiver | Windows receiver |
 | --- | --- |
-| ![鼠标布局](Windows/Windows/screenshots/v23-mouse.jpg) | ![键鼠布局](Windows/Windows/screenshots/v23-keyboard.jpg) |
+| <img src="docs/screenshots/mac-desktop.png" alt="Native macOS receiver in English" width="520"> | <img src="docs/screenshots/windows-desktop.png" alt="Windows receiver in English" width="520"> |
 
-## 开发与构建
+## Download and start
 
-源码位于 [`Windows/Windows`](Windows/Windows)，详细运行和打包步骤见 [开发说明](Windows/Windows/README.md)。
+| Platform | Download | First start |
+| --- | --- | --- |
+| Windows | [WatchMouse-2.4.exe](https://github.com/jiangyiyx-star/WatchMouse/releases/download/v2.4/WatchMouse-2.4.exe) | Open the EXE. Allow its connection on your trusted private network if prompted. |
+| Apple silicon Mac | [WatchMouse-Mac-2.4-arm64.zip](https://github.com/jiangyiyx-star/WatchMouse/releases/download/v2.4/WatchMouse-Mac-2.4-arm64.zip) | Unzip and move WatchMouse to Applications. Enable its Accessibility permission in System Settings. |
+
+Desktop builds include Python and the web UI. You do not need to install Python to use them. The Mac download targets Apple silicon and macOS 11 or later; an Intel Mac build has not been validated. These builds are not commercially code-signed; the Mac app is ad-hoc signed and not Apple-notarized.
+
+1. Connect your phone and computer to the same Wi-Fi.
+2. Start WatchMouse and scan the QR code once in your phone's browser.
+3. Focus the app you want to control on the computer.
+4. Keep the receiver running. Closing its window stops the service.
+
+**Pair once:** the desktop keeps its pairing key across restarts and upgrades; the phone saves it in the same browser and automatically reconnects when the receiver returns. Bookmark the paired URL for next time. Clearing browser storage or resetting the desktop configuration requires pairing again. If the computer's LAN address changes, scan its updated QR code; the pairing key itself stays the same. Browser storage is tied to the address, so automatic discovery across changed IP addresses is not supported.
+
+## What it does
+
+- **Mouse:** one-finger movement, tap to click, left/right buttons, drag toggle, two-finger scrolling, and a separate one-finger scroll strip.
+- **Keyboard:** draft text on your phone and send it when ready. Supports Chinese, emoji, phone IME, and keyboard dictation. Text and input events go to the focused desktop app.
+- **Video:** large previous, play/pause, and next buttons for apps that respond to arrow/space keys.
+- **Language:** English by default, with saved Simplified Chinese selection on the phone and both desktop receivers.
+- **Mac shortcuts:** protocol Ctrl/Win modifiers map to Command; Alt maps to Option.
+- **Watch:** an experimental JavaScript-free `/watch` page. Physical Apple Watch compatibility has not been verified.
+
+The website does not change your phone keyboard's dictation language or stream phone audio as a system microphone. Browser speech input is only offered where the browser supports it in a secure context. Some games and protected input fields may reject synthetic input or Unicode events.
+
+## Local and private
+
+There is no hosted WatchMouse account, relay, or analytics. A persistent random key protects input commands; keep the QR code and pairing link private. Traffic uses **unencrypted local HTTP**, so use a trusted network and never forward port 53514 to the Internet. See [Security](SECURITY.md) for the model and pairing reset steps.
+
+## Build from source
+
+### Windows
 
 ```powershell
 cd Windows\Windows
 py -3 -m pip install -r requirements-build.txt
 py -3 app.py
-```
-
-重新打包：
-
-```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-测试：
+The build supports Windows PowerShell 5.1 and paths/usernames containing Chinese characters. [Windows development guide](Windows/Windows/README.md)
 
-```powershell
-py -3 -m unittest discover -s tests
-node tests/frontend-smoke.cjs
+### macOS
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r Mac/requirements.txt
+.venv/bin/python Mac/app.py
+bash Mac/build.sh
 ```
 
-EXE 通过 GitHub Releases 分发；Git 仓库保存源码、测试、说明和当前 UI 截图。
+[Mac development guide](Mac/README.md)
+
+### Tests
+
+```bash
+python -m unittest discover -s Windows/Windows/tests
+node Windows/Windows/tests/frontend-smoke.cjs
+# On macOS with Mac dependencies installed:
+python -m unittest discover -s Mac/tests
+```
+
+CI builds both platforms. Input tests mock final injection so they do not type into or move the tester's desktop. Real phone-to-Mac connection and control have been confirmed by a user; full app compatibility and physical Apple Watch behavior remain unverified.
+
+## Project layout
+
+```text
+Mac/                    Native Cocoa receiver and Quartz adapter
+Windows/Windows/        Windows receiver, shared HTTP service and phone UI
+docs/screenshots/       Screenshots made with non-working demo pairing data
+.github/workflows/      Platform tests, builds and demo screenshots
+```
+
+The phone assets remain in their original Windows directory so both existing builds can reuse the same protocol and UI.
+
+## Contribute and license
+
+Issues and focused pull requests are welcome. Read [Contributing](CONTRIBUTING.md) before sending a change.
+
+WatchMouse source is licensed under [MIT](LICENSE). Bundled third-party components retain their own licenses; see [Third-party notices](THIRD_PARTY_NOTICES.md).

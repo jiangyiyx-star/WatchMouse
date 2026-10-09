@@ -2,9 +2,9 @@
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 [hidden]{display:none!important}
 html,body{height:100%;margin:0;overflow:hidden;overscroll-behavior:none}
-button,input,textarea{font:inherit}
+button,input,textarea,select{font:inherit}
 button{cursor:pointer;color:inherit;border:1px solid var(--line);background:var(--surface);touch-action:manipulation;-webkit-user-select:none;user-select:none;transition:background .15s,border-color .15s}
-button:active{background:#303c35}button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:-3px}button:disabled{opacity:.45;cursor:wait}
+button:active{background:#303c35}button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:-3px}button:disabled{opacity:.45;cursor:wait}
 .visually-hidden{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .app-shell{max-width:1100px;height:var(--viewport-height,100dvh);min-height:0;margin:0 auto;transform:translateY(var(--viewport-offset,0px));padding:calc(6px + env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) calc(8px + env(safe-area-inset-left));display:flex;flex-direction:column;gap:6px;overflow:hidden}
 .workspace{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr);gap:8px;flex:1;min-height:0;min-width:0;overflow:auto;overscroll-behavior:contain}
@@ -33,3 +33,5 @@ textarea{display:block;flex:1;width:0;min-width:0;height:48px;min-height:48px;ma
 @media(max-height:300px){.keyboard-visible .scroll-rail>button{display:none}}
 @media(max-width:350px){.app-shell{padding-left:6px;padding-right:6px}.mouse-controller{grid-template-columns:minmax(0,1fr) 44px}.mouse-buttons{grid-template-columns:minmax(0,1fr) 52px minmax(0,1fr)}.mode-switcher{gap:4px}.status-button{width:32px;min-width:32px}.draft-actions{gap:4px}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+
+.language-setting{display:flex;align-items:center;justify-content:space-between;gap:12px;color:#9da9a3;font-size:11px;margin-top:6px}.language-setting select{max-width:65%;min-height:36px;padding:5px 9px;border:1px solid #414a46;border-radius:8px;background:#151919;color:#dedfe2}

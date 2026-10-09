@@ -7,7 +7,7 @@ const html = fs.readFileSync(path.join(__dirname, '..', 'remote.html'), 'utf8');
 const source = fs.readFileSync(path.join(__dirname, '..', 'remote.js'), 'utf8');
 const wait = () => new Promise(resolve => setTimeout(resolve, 30));
 
-function createApp(savedMode = null, inputStatus = {}) {
+function createApp(savedMode = null, inputStatus = {}, options = {}) {
   let document;
   class Element {
     constructor() {
@@ -28,7 +28,10 @@ function createApp(savedMode = null, inputStatus = {}) {
       return delivered;
     }
     dispatchEvent(event) {this.emit(event.type, event); return true;}
-    setAttribute(key, value) {this.attributes[key] = value;}
+    setAttribute(key, value) {
+      this.attributes[key] = value;
+      if (key.startsWith('data-')) this.dataset[key.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = value;
+    }
     getBoundingClientRect() {return {left: 0, top: 0};}
     setPointerCapture(id) {this.captured.add(id);}
     hasPointerCapture(id) {return this.captured.has(id);}
@@ -43,57 +46,75 @@ function createApp(savedMode = null, inputStatus = {}) {
       this.setSelectionRange(start + text.length);
     }
   }
-  const elements = {};
-  for (const match of html.matchAll(/<[^>]*\bid="([^"]+)"[^>]*>/g)) {
-    elements[match[1]] = new Element();
-    elements[match[1]].hidden = /\bhidden\b/.test(match[0]);
-    for (const attribute of match[0].matchAll(/(aria-[\w-]+)="([^"]*)"/g)) elements[match[1]].setAttribute(attribute[1], attribute[2]);
-    for (const className of (/class="([^"]*)"/.exec(match[0])?.[1] || '').split(' ')) elements[match[1]].classList.add(className);
-    elements[match[1]].textContent = /^[^<]*/.exec(html.slice(match.index + match[0].length))[0];
+  const elements = {}, allElements = [];
+  for (const match of html.matchAll(/<([a-z][a-z0-9]*)\b([^>]*)>/g)) {
+    const element = new Element();
+    allElements.push(element);
+    const id = /\bid="([^"]+)"/.exec(match[2])?.[1];
+    if (id) elements[id] = element;
+    element.hidden = /\bhidden\b/.test(match[2]);
+    for (const attribute of match[2].matchAll(/([\w-]+)="([^"]*)"/g)) element.setAttribute(attribute[1], attribute[2]);
+    for (const className of (element.attributes.class || '').split(' ')) element.classList.add(className);
+    element.textContent = /^[^<]*/.exec(html.slice(match.index + match[0].length))[0];
   }
-  function buttons(attribute) {
-    const pattern = new RegExp('<button[^>]*\\b' + attribute + '="([^"]+)"([^>]*)>([^<]*)', 'g');
-    return [...html.matchAll(pattern)].map(match => {
-      const id = /\bid="([^"]+)"/.exec(match[0])?.[1];
-      const button = id ? elements[id] : new Element();
-      button.dataset[attribute.slice(5)] = match[1];
-      button.dataset.modifiers = /data-modifiers="([^"]+)"/.exec(match[2])?.[1];
-      button.textContent = match[3];
-      return button;
-    });
-  }
-  const commands = buttons('data-command');
-  const keys = buttons('data-key');
-  const modes = buttons('data-mode');
+  const commands = allElements.filter(element => element.dataset.command);
+  const keys = allElements.filter(element => element.dataset.key);
+  const modes = allElements.filter(element => element.dataset.mode);
   document = new Element(); document.hidden = false; document.activeElement = null; document.body = new Element(); document.documentElement = new Element();
   document.getElementById = id => elements[id];
   document.querySelectorAll = selector => {
-    if (selector === '[data-command]') return commands;
-    if (selector === '[data-key]') return keys;
-    if (selector === '[data-mode]') return modes;
+    if (/^\[data-[\w-]+\]$/.test(selector)) return allElements.filter(element => Object.prototype.hasOwnProperty.call(element.attributes, selector.slice(1, -1)));
     return [...new Set([...keys, ...commands, elements.deleteTextButton, elements.openPhoneKeyboard, elements.sendTextButton, elements.speechButton])];
   };
   const window = new Element(); window.isSecureContext = false; window.innerHeight = 640;
   window.visualViewport = new Element(); window.visualViewport.height = 640; window.visualViewport.offsetTop = 0;
-  const records = [], stored = new Map(savedMode ? [['watchmouse_mode', savedMode]] : []);
+  if (options.secureSpeech) {
+    window.isSecureContext = true;
+    window.SpeechRecognition = class {
+      constructor() { window.recognition = this; }
+      start() { this.onstart(); }
+      stop() { this.onend(); }
+    };
+  }
+  const records = [], statusRequests = [], stored = options.stored || new Map(savedMode ? [['watchmouse_mode', savedMode]] : []);
+  const timers = new Map();
+  let nextTimerId = 1, statusActive = 0, maxStatusActive = 0, statusFailure = null;
+  function scheduleTimeout(callback, delay) {
+    if (delay <= 100) return setTimeout(callback, delay);
+    const id = nextTimerId++; timers.set(id, {callback, delay}); return id;
+  }
+  function cancelTimeout(id) { if (!timers.delete(id)) clearTimeout(id); }
+  function runStatusTimer() {
+    const entry = [...timers.entries()].sort((a, b) => a[1].delay - b[1].delay)[0];
+    if (!entry) return false;
+    timers.delete(entry[0]); entry[1].callback(); return entry[1].delay;
+  }
+
   const statusResult = {app: 'WatchMouse', paired: true, ...inputStatus};
   let active = 0, maxActive = 0, failure = null;
   const sandbox = {
     console, document, window, URL, Map, Promise, Math, Number, TypeError, Error, JSON, Array, Blob, Event, Intl,
-    AbortController, setTimeout, clearTimeout, setInterval: () => 0, performance,
-    location: {href: 'http://192.168.1.5:53514/?token=testtoken123456789', host: '192.168.1.5:53514'},
+    AbortController, setTimeout: scheduleTimeout, clearTimeout: cancelTimeout, setInterval: () => 0, performance,
+    location: {href: options.href || 'http://192.168.1.5:53514/?token=testtoken123456789', host: '192.168.1.5:53514'},
     localStorage: {getItem: key => stored.get(key) || null, setItem: (key, value) => stored.set(key, value)},
     matchMedia: () => ({matches: false}), requestAnimationFrame: callback => callback(),
-    navigator: {sendBeacon: () => true},
-    fetch: async (url, options) => {
-      if (url.startsWith('/api/status')) return {ok: true, json: async () => ({...statusResult})};
+    navigator: {onLine: true, sendBeacon: () => true},
+    fetch: async (url, requestOptions) => {
+      if (url.startsWith('/api/status')) {
+        statusActive++; maxStatusActive = Math.max(maxStatusActive, statusActive);
+        statusRequests.push({url, token: requestOptions.headers?.['X-WatchMouse-Token']});
+        if (options.statusDelay) await new Promise(resolve => setTimeout(resolve, options.statusDelay));
+        statusActive--;
+        if (statusFailure) throw new TypeError('network request failed');
+        return {ok: true, json: async () => ({...statusResult})};
+      }
       active++; maxActive = Math.max(maxActive, active);
-      records.push(JSON.parse(options.body));
+      records.push(JSON.parse(requestOptions.body));
       await new Promise(resolve => setTimeout(resolve, 2));
       active--;
       if (failure) {
-        const {status, error} = failure; failure = null;
-        return {ok: false, status, json: async () => ({ok: false, error})};
+        const {status, error, errorCode} = failure; failure = null;
+        return {ok: false, status, json: async () => ({ok: false, error, errorCode})};
       }
       return {ok: true, json: async () => ({ok: true})};
     }
@@ -104,14 +125,14 @@ function createApp(savedMode = null, inputStatus = {}) {
     elements.textInput.setSelectionRange(start, end);
     elements.textInput.emit('input');
   }
-  return {elements, document, window, commands, keys, modes, records, stored, draft, maxActive: () => maxActive, failNext: (status, error) => {failure = {status, error};}, setStatus: update => Object.assign(statusResult, update)};
+  return {elements, document, window, commands, keys, modes, records, stored, draft, statusRequests, timers, runStatusTimer, maxStatusActive: () => maxStatusActive, maxActive: () => maxActive, failNext: (status, error, errorCode) => {failure = {status, error, errorCode};}, setStatusFailure: fail => {statusFailure = fail;}, setStatus: update => Object.assign(statusResult, update)};
 }
 
 (async () => {
   const app = createApp();
   const {elements, document, commands, records, stored, draft} = app;
   await wait();
-  assert.equal(elements.connectionButton.attributes['aria-label'], '已连接，打开连接设置');
+  assert.equal(elements.connectionButton.attributes['aria-label'], 'Connected; open connection settings');
   assert.equal(elements.connectionButton.textContent, '', 'connection has only a dot');
   assert.equal(elements.actionFeedback.textContent, '', 'success does not announce or display text');
   assert(!elements.mousePanel.hidden && elements.douyinPanel.hidden && elements.keyboardPanel.hidden);
@@ -213,7 +234,7 @@ function createApp(savedMode = null, inputStatus = {}) {
   assert.equal(document.activeElement, elements.textInput);
   assert.equal(records.length, beforeDraftDelete, 'draft editing does not affect PC');
   assert.equal(elements.deleteTextButton.textContent, '⌫');
-  assert(elements.deleteTextButton.attributes['aria-label'].includes('删除草稿'));
+  assert(elements.deleteTextButton.attributes['aria-label'].includes('in the draft'));
   assert.equal(elements.textFeedback.textContent, '');
   draft('甲👨‍👩‍👧‍👦'); elements.deleteTextButton.click();
   assert.equal(elements.textInput.value, '甲', 'delete a complete emoji family');
@@ -229,7 +250,7 @@ function createApp(savedMode = null, inputStatus = {}) {
   assert.equal(records.length, beforeDraftDelete);
   draft(''); elements.deleteTextButton.click(); await wait();
   assert.equal(records.at(-1).key, 'backspace');
-  assert(elements.deleteTextButton.attributes['aria-label'].includes('电脑当前窗口按退格'));
+  assert(elements.deleteTextButton.attributes['aria-label'].includes('Backspace in the current computer window'));
 
   draft('中文语音🙂\n第二行');
   elements.textInput.emit('compositionstart');
@@ -246,31 +267,33 @@ function createApp(savedMode = null, inputStatus = {}) {
   assert(records.every(item => item.token === 'testtoken123456789'));
   elements.connectionButton.click();
   assert(!elements.connectionPanel.hidden);
+  assert(app.runStatusTimer()); await wait();
+  assert(!elements.connectionPanel.hidden, 'healthy polling leaves settings open while being edited');
   elements.connectionButton.click();
   assert(elements.connectionPanel.hidden);
   const permissionError = '请在 Mac 系统设置 → 隐私与安全性 → 辅助功能中允许 WatchMouse';
   const unavailable = createApp(null, {inputReady: false, inputError: permissionError}); await wait();
   assert.equal(unavailable.stored.get('watchmouse_token'), 'testtoken123456789', 'pairing token remains saved while input permission is denied');
-  assert.equal(unavailable.elements.connectionButton.attributes['aria-label'], '未连接，打开连接设置');
+  assert.equal(unavailable.elements.connectionButton.attributes['aria-label'], 'Disconnected; open connection settings');
   assert(!unavailable.elements.connectionPanel.hidden);
-  assert.equal(unavailable.elements.connectionMessage.textContent, permissionError);
-  assert.equal(unavailable.elements.actionFeedback.textContent, permissionError);
+  assert.equal(unavailable.elements.connectionMessage.textContent, 'Allow WatchMouse in Mac System Settings → Privacy & Security → Accessibility.');
+  assert.equal(unavailable.elements.actionFeedback.textContent, 'Allow WatchMouse in Mac System Settings → Privacy & Security → Accessibility.');
   unavailable.draft('授权后发送'); unavailable.elements.sendTextButton.click(); await wait();
   assert.equal(unavailable.records.length, 0, 'permission-denied status blocks input requests');
   assert.equal(unavailable.elements.textInput.value, '授权后发送');
-  unavailable.setStatus({inputReady: true, inputError: ''}); unavailable.elements.pairButton.click(); await wait();
-  assert.equal(unavailable.elements.connectionButton.attributes['aria-label'], '已连接，打开连接设置');
+  unavailable.setStatus({inputReady: true, inputError: ''}); assert(unavailable.runStatusTimer()); await wait();
+  assert.equal(unavailable.elements.connectionButton.attributes['aria-label'], 'Connected; open connection settings');
   unavailable.elements.sendTextButton.click(); await wait();
   assert.equal(unavailable.records.at(-1).text, '授权后发送');
   assert.equal(unavailable.elements.textInput.value, '', 'retained draft can be sent after permission is granted');
   const unspecifiedPermission = createApp(null, {inputReady: false}); await wait();
-  assert.equal(unspecifiedPermission.elements.connectionMessage.textContent, '电脑输入权限未开启');
+  assert.equal(unspecifiedPermission.elements.connectionMessage.textContent, 'Enable input permission on the computer.');
 
   for (const [backendError, expected] of [
-    [permissionError, permissionError],
-    ['Windows 未接受输入。请确认目标窗口没有以管理员身份运行。', 'Windows 未接受输入。请确认目标窗口没有以管理员身份运行。'],
-    ['', '电脑未接收输入'],
-    ['x'.repeat(201), '电脑未接收输入']
+    [permissionError, 'Allow WatchMouse in Mac System Settings → Privacy & Security → Accessibility.'],
+    ['Windows 未接受输入。请确认目标窗口没有以管理员身份运行。', 'Windows did not accept input. Check whether the target app is running as administrator.'],
+    ['', 'The computer did not accept input.'],
+    ['x'.repeat(201), 'The computer did not accept input.']
   ]) {
     const failed = createApp(); await wait();
     failed.draft('保留这段草稿'); failed.failNext(409, backendError); failed.elements.sendTextButton.click(); await wait();
@@ -282,5 +305,72 @@ function createApp(savedMode = null, inputStatus = {}) {
     assert(!failed.elements.textFeedback.classList.contains('visually-hidden'));
     assert(!failed.elements.sendTextButton.disabled);
   }
-  console.log('PASS: integrated minimal UI/silent success, modes/native focus, viewport resize, mouse/drag, independent scroll rail/fractions/cancel/cleanup, draft deletion/backspace, IME/Unicode send, pairing/input readiness, actionable permission errors/failed-send preservation, authenticated serialized requests.');
+  assert.equal(document.documentElement.lang, 'en', 'new users start in English');
+  assert.equal(elements.languageSelect.value, 'en');
+  assert.equal(elements.keyboardModeButton.textContent, 'Keyboard');
+  assert.equal(elements.textInput.attributes.placeholder, 'Type…');
+  elements.languageSelect.value = 'zh'; elements.languageSelect.emit('change');
+  assert.equal(stored.get('watchmouse_language'), 'zh');
+  assert.equal(document.documentElement.lang, 'zh-CN');
+  assert.equal(elements.keyboardModeButton.textContent, '键鼠');
+  assert.equal(elements.textInput.attributes.placeholder, '输入…');
+  assert.equal(elements.connectionButton.attributes['aria-label'], '已连接，打开连接设置');
+  assert(elements.watchLink.href.includes('lang=zh-CN'));
+  const reopened = createApp(null, {}, {stored, href: 'http://192.168.1.5:53514/'}); await wait();
+  assert.equal(reopened.document.documentElement.lang, 'zh-CN', 'language persists after reopening');
+  assert.equal(reopened.statusRequests[0].token, 'testtoken123456789', 'saved pairing works without QR token');
+  assert.equal(reopened.elements.connectionButton.attributes['aria-label'], '已连接，打开连接设置');
+  const speechApp = createApp(null, {}, {secureSpeech: true}); await wait();
+  assert.equal(speechApp.window.recognition.lang, 'en-US');
+  speechApp.elements.languageSelect.value = 'zh'; speechApp.elements.languageSelect.emit('change');
+  assert.equal(speechApp.window.recognition.lang, 'zh-CN', 'secure browser dictation follows interface locale');
+
+  const staleQueue = createApp(); await wait();
+  staleQueue.failNext(409, '', 'input_unavailable');
+  staleQueue.commands.find(button => button.dataset.command === 'C').click();
+  staleQueue.commands.find(button => button.dataset.command === 'RC').click();
+  await wait();
+  assert.equal(staleQueue.records.length, 1, 'disconnect drops input queued behind a failed request');
+  assert(staleQueue.runStatusTimer()); await wait();
+  assert.equal(staleQueue.records.length, 1, 'old queued clicks are not sent after reconnection');
+
+  const reconnect = createApp(); await wait();
+  reconnect.draft('Keep this draft');
+  reconnect.setStatusFailure(true); assert(reconnect.runStatusTimer()); await wait();
+  assert.equal(reconnect.elements.connectionButton.attributes['aria-label'], 'Disconnected; open connection settings');
+  reconnect.commands.find(button => button.dataset.command === 'C').click();
+  assert.equal(reconnect.records.length, 0, 'input is not queued while disconnected');
+  reconnect.setStatusFailure(false); assert(reconnect.runStatusTimer()); await wait();
+  assert.equal(reconnect.elements.connectionButton.attributes['aria-label'], 'Connected; open connection settings');
+  assert.equal(reconnect.elements.textInput.value, 'Keep this draft');
+  assert.equal(reconnect.records.length, 0, 'reconnection never replays stale input');
+  reconnect.elements.sendTextButton.click(); await wait();
+  assert.equal(reconnect.records.at(-1).text, 'Keep this draft');
+  reconnect.document.hidden = true; reconnect.document.emit('visibilitychange');
+  assert.equal(reconnect.timers.size, 0, 'status polling stops while the page is hidden');
+  const hiddenCount = reconnect.statusRequests.length;
+  reconnect.window.emit('online'); await wait();
+  assert.equal(reconnect.statusRequests.length, hiddenCount, 'hidden page does not issue status requests');
+  reconnect.document.hidden = false; reconnect.document.emit('visibilitychange'); await wait();
+  assert.equal(reconnect.statusRequests.length, hiddenCount + 1);
+
+  const wrongToken = createApp(null, {paired: false}); await wait();
+  assert.equal(wrongToken.elements.connectionMessage.textContent, 'Invalid pairing code. Check the code in the receiver.');
+  assert.equal(wrongToken.timers.size, 0, 'invalid credentials are not retried endlessly');
+  wrongToken.setStatus({paired: true}); wrongToken.elements.pairingCode.value = 'corrected'; wrongToken.elements.pairButton.click(); await wait();
+  assert.equal(wrongToken.stored.get('watchmouse_token'), 'corrected');
+  const overlapping = createApp(null, {}, {statusDelay: 10});
+  overlapping.document.emit('visibilitychange'); overlapping.document.emit('visibilitychange');
+  await wait(); await wait();
+  assert.equal(overlapping.maxStatusActive(), 1, 'multiple resume triggers never overlap status requests');
+  for (const [code, expected] of [
+    ['accessibility_permission', 'Allow WatchMouse in Mac System Settings → Privacy & Security → Accessibility.'],
+    ['windows_elevation', 'Windows did not accept input. Check whether the target app is running as administrator.']
+  ]) {
+    const coded = createApp(null, {inputReady: false, inputErrorCode: code, inputError: 'untranslated backend detail'}); await wait();
+    assert.equal(coded.elements.connectionMessage.textContent, expected);
+    coded.elements.languageSelect.value = 'zh'; coded.elements.languageSelect.emit('change');
+    assert(/[\u4e00-\u9fff]/.test(coded.elements.connectionMessage.textContent), 'dynamic permission feedback switches language');
+  }
+  console.log('PASS: integrated minimal UI/silent success, modes/native focus, viewport resize, mouse/drag, independent scroll rail/fractions/cancel/cleanup, draft deletion/backspace, IME/Unicode send, pairing/input readiness, actionable permission errors/failed-send preservation, authenticated serialized requests, saved EN/ZH interface and pairing, speech locale, non-overlapping status checks, permission/restart reconnect, hidden-page suspension, stale-input discard.');
 })().catch(error => {console.error(error); process.exitCode = 1;});

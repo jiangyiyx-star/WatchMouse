@@ -1,9 +1,9 @@
 name: Mac build and tests
 on:
   push:
-    paths: ['Mac/**', 'Windows/Windows/**', '.github/workflows/mac.yml']
+    paths: ['Mac/**', 'Windows/Windows/**', 'LICENSE', 'THIRD_PARTY_LICENSES.txt', '.github/workflows/mac.yml']
   pull_request:
-    paths: ['Mac/**', 'Windows/Windows/**', '.github/workflows/mac.yml']
+    paths: ['Mac/**', 'Windows/Windows/**', 'LICENSE', 'THIRD_PARTY_LICENSES.txt', '.github/workflows/mac.yml']
   workflow_dispatch:
 permissions:
   contents: read

@@ -10,5 +10,5 @@ fi
 .build-venv/bin/python -m pip install -r requirements.txt
 .build-venv/bin/python -m PyInstaller --noconfirm --clean WatchMouse.spec
 /usr/bin/codesign --force --deep --sign - dist/WatchMouse.app
-/usr/bin/ditto -c -k --sequesterRsrc --keepParent dist/WatchMouse.app "dist/WatchMouse-Mac-2.3.1-$(uname -m).zip"
+/usr/bin/ditto -c -k --sequesterRsrc --keepParent dist/WatchMouse.app "dist/WatchMouse-Mac-2.4-$(uname -m).zip"
 echo "Created: $(pwd)/dist/WatchMouse.app"

@@ -5,6 +5,59 @@
     get(key) { try { return localStorage.getItem(key); } catch (_) { return null; } },
     set(key, value) { try { localStorage.setItem(key, value); } catch (_) {} }
   };
+  const messages = {
+    en: {
+      watch: 'Watch ↗', left: 'Left', drag: 'Drag', right: 'Right', connect: 'Connect', speed: 'Speed',
+      video: 'Video', mouse: 'Mouse', keyboard: 'Keyboard', language: 'Language', interfaceLanguage: 'Interface language',
+      videoControls: 'Video controls', previousVideo: 'Previous video', playPause: 'Play or pause', nextVideo: 'Next video',
+      mouseControls: 'Mouse controls', touchpad: 'Touchpad: move with one finger, tap to click, scroll with two fingers',
+      leftClick: 'Left click', rightClick: 'Right click', dragOff: 'Drag: hold the left mouse button',
+      dragOn: 'Drag active: release the left mouse button', scroll: 'Scroll', scrollUp: 'Scroll up', scrollDown: 'Scroll down',
+      scrollSurface: 'Slide one finger up or down to scroll', phoneInput: 'Phone input', type: 'Type…', draft: 'Text draft',
+      speech: 'Browser dictation', stopSpeech: 'Stop dictation', sendDraft: 'Send draft to computer',
+      commonActions: 'Common actions', backspace: 'Computer backspace', space: 'Computer space', enter: 'Computer Enter',
+      phoneKeyboard: 'Open phone keyboard', connectionSettings: 'Connection settings', pairingCode: 'Pairing code',
+      mouseSpeed: 'Mouse movement speed', controlMode: 'Control mode', connectingSettings: 'Connecting; open connection settings',
+      connectedSettings: 'Connected; open connection settings', disconnectedSettings: 'Disconnected; open connection settings',
+      invalid_token: 'Invalid pairing code. Check the code in the receiver.', enterPairing: 'Enter the pairing code from the receiver.',
+      input_unavailable: 'The computer did not accept input.', invalid_request: 'Unable to perform this action.',
+      accessibility_permission: 'Allow WatchMouse in Mac System Settings → Privacy & Security → Accessibility.',
+      accessibility_relaunch: 'Add the current WatchMouse app in Mac Accessibility settings, enable it, then reopen WatchMouse.',
+      windows_elevation: 'Windows did not accept input. Check whether the target app is running as administrator.',
+      timeout: 'Connection timed out. Retrying…', disconnected: 'Connection lost. Retrying…',
+      networkOffline: 'Network disconnected. Reconnect to Wi-Fi.', invalidAddress: 'This address is not a WatchMouse receiver.',
+      invalidResponse: 'Invalid response from the receiver.', notConnected: 'Not connected.',
+      inputPermission: 'Enable input permission on the computer.', finishComposition: 'Finish choosing the current character first.',
+      stopSpeechFirst: 'Stop dictation first.', speechUnavailable: 'Browser dictation is unavailable.',
+      deleteDraft: 'Delete selected text or the character before the cursor in the draft',
+      deleteComputer: 'Press Backspace in the current computer window'
+    },
+    zh: {
+      watch: '手表 ↗', left: '左键', drag: '拖动', right: '右键', connect: '连接', speed: '速度',
+      video: '视频', mouse: '鼠标', keyboard: '键鼠', language: '语言', interfaceLanguage: '界面语言',
+      videoControls: '视频遥控', previousVideo: '上一个视频', playPause: '播放或暂停', nextVideo: '下一个视频',
+      mouseControls: '鼠标控制', touchpad: '触控板：单指移动，轻点单击，双指滚动', leftClick: '鼠标左键', rightClick: '鼠标右键',
+      dragOff: '拖动，点击按住左键', dragOn: '拖动已开启，点击松开左键', scroll: '滚轮', scrollUp: '向上滚动', scrollDown: '向下滚动',
+      scrollSurface: '单指上下滑动滚动页面', phoneInput: '手机输入', type: '输入…', draft: '输入草稿',
+      speech: '浏览器语音输入', stopSpeech: '停止语音', sendDraft: '发送草稿到电脑', commonActions: '常用操作',
+      backspace: '电脑退格', space: '电脑空格', enter: '电脑回车', phoneKeyboard: '打开手机键盘',
+      connectionSettings: '连接设置', pairingCode: '配对码', mouseSpeed: '鼠标移动速度', controlMode: '遥控模式',
+      connectingSettings: '正在连接，打开连接设置', connectedSettings: '已连接，打开连接设置', disconnectedSettings: '未连接，打开连接设置',
+      invalid_token: '配对码无效，请核对接收器中的配对码', enterPairing: '请输入接收器中的配对码',
+      input_unavailable: '电脑未接收输入', invalid_request: '操作失败',
+      accessibility_permission: '请在 Mac 系统设置 → 隐私与安全性 → 辅助功能中允许 WatchMouse',
+      accessibility_relaunch: '请在 Mac 辅助功能设置中添加当前 WatchMouse，开启权限后重新打开应用',
+      windows_elevation: 'Windows 未接受输入。请确认目标窗口没有以管理员身份运行。',
+      timeout: '连接超时，正在重试…', disconnected: '连接断开，正在重试…', networkOffline: '网络断开，请重新连接 Wi-Fi',
+      invalidAddress: '此地址不是 WatchMouse 接收器', invalidResponse: '接收器响应异常', notConnected: '未连接',
+      inputPermission: '电脑输入权限未开启', finishComposition: '请先完成选字', stopSpeechFirst: '请先停止语音',
+      speechUnavailable: '语音不可用', deleteDraft: '删除草稿中光标左侧的文字或选中文字',
+      deleteComputer: '在电脑当前窗口按退格，删除光标左侧文字'
+    }
+  };
+  let language = storage.get('watchmouse_language') === 'zh' ? 'zh' : 'en';
+  const t = key => messages[language][key] || messages[language].invalid_request;
+  const localError = key => Object.assign(new Error(t(key)), {errorCode: key});
   const url = new URL(location.href);
   let token = url.searchParams.get('token') || storage.get('watchmouse_token') || '';
   let connected = false;
@@ -16,6 +69,16 @@
   let railPointer = null;
   let motionTimer = null;
   let statusVersion = 0;
+  let statusInFlight = false;
+  let statusCheckQueued = false;
+  let statusTimer = null;
+  let reconnectFailures = 0;
+  let retryBlocked = false;
+  let inputEpoch = 0;
+  let connectionState = 'connecting';
+  let connectionMessageKey = '';
+  let actionMessageKey = '', actionError = false;
+  let textMessageKey = '', textError = false;
   const queue = [];
   const pointers = new Map();
   let gesture = null;
@@ -30,47 +93,88 @@
   $('pairingCode').value = token;
   $('serverAddress').textContent = location.host;
   function refreshWatchLink() {
-    $('watchLink').href = '/watch' + (token ? '?token=' + encodeURIComponent(token) : '');
+    $('watchLink').href = '/watch?lang=' + (language === 'zh' ? 'zh-CN' : 'en') + (token ? '&token=' + encodeURIComponent(token) : '');
   }
   refreshWatchLink();
 
-  function feedback(message, error = false) {
-    $('actionFeedback').textContent = error ? message : '';
+  function renderConnection() {
+    $('statusDot').className = 'status-dot ' + (connectionState === 'connected' ? 'connected' : connectionState === 'connecting' ? '' : 'error');
+    $('connectionButton').setAttribute('aria-label', t(connectionState + 'Settings'));
+    $('connectionMessage').textContent = connectionMessageKey ? t(connectionMessageKey) : '';
+  }
+  function feedback(key = '', error = false) {
+    actionMessageKey = key; actionError = error;
+    $('actionFeedback').textContent = error && key ? t(key) : '';
     $('actionFeedback').classList.toggle('error', error);
     $('actionFeedback').classList.toggle('visually-hidden', !error);
   }
-  function textFeedback(message = '', error = false) {
-    $('textFeedback').textContent = error ? message : '';
+  function textFeedback(key = '', error = false) {
+    textMessageKey = key; textError = error;
+    $('textFeedback').textContent = error && key ? t(key) : '';
     $('textFeedback').classList.toggle('error', error);
     $('textFeedback').classList.toggle('visually-hidden', !error);
   }
-  function setConnection(ok, message) {
-    connected = ok;
-    $('statusDot').className = 'status-dot ' + (ok ? 'connected' : 'error');
-    $('connectionButton').setAttribute('aria-label', (ok ? '已连接' : '未连接') + '，打开连接设置');
-    $('connectionMessage').textContent = ok ? '' : message;
-    if (!ok) {
-      while (queue.length) {
-        const item = queue.shift();
-        if (item.reject) item.reject(new Error(message));
-      }
-      pendingX = pendingY = pendingScroll = pendingRailScroll = 0;
-      clearRailGesture();
-      dragActive = false;
-      updateDragUI();
-      setConnectionPanel(true);
+  function applyLanguage() {
+    document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
+    document.querySelectorAll('[data-i18n]').forEach(element => { element.textContent = t(element.dataset.i18n); });
+    document.querySelectorAll('[data-i18n-aria]').forEach(element => { element.setAttribute('aria-label', t(element.dataset.i18nAria)); });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(element => { element.setAttribute('placeholder', t(element.dataset.i18nPlaceholder)); });
+    $('languageSelect').value = language;
+    refreshWatchLink();
+    renderConnection(); updateDragUI(); updateDeleteLabel();
+    feedback(actionMessageKey, actionError); textFeedback(textMessageKey, textError);
+    if (speech) {
+      speech.lang = language === 'zh' ? 'zh-CN' : 'en-US';
+      $('speechButton').setAttribute('aria-label', t(speechListening ? 'stopSpeech' : 'speech'));
     }
+  }
+  $('languageSelect').addEventListener('change', event => {
+    language = event.target.value === 'zh' ? 'zh' : 'en';
+    storage.set('watchmouse_language', language);
+    if (speechListening && speech) speech.stop();
+    applyLanguage();
+  });
+  function discardInput(messageKey = 'notConnected') {
+    inputEpoch++;
+    while (queue.length) {
+      const item = queue.shift();
+      if (item.reject) item.reject(localError(messageKey));
+    }
+    if (motionTimer) { clearTimeout(motionTimer); motionTimer = null; }
+    pendingX = pendingY = pendingScroll = pendingRailScroll = 0;
+    clearRailGesture();
+    pointers.clear(); gesture = null;
+    $('touchpad').classList.remove('is-touching');
+    $('touchIndicator').hidden = true;
+    dragActive = false; updateDragUI();
+  }
+  function setConnection(ok, messageKey = '') {
+    connected = ok;
+    connectionState = ok ? 'connected' : 'disconnected';
+    connectionMessageKey = ok ? '' : messageKey;
+    renderConnection();
+    if (!ok) { discardInput(messageKey); setConnectionPanel(true); }
   }
   function setConnectionPanel(open) {
     $('connectionPanel').hidden = !open;
     $('connectionButton').setAttribute('aria-expanded', String(open));
   }
+  function serverErrorKey(code, message, fallback = 'input_unavailable') {
+    if (code && Object.prototype.hasOwnProperty.call(messages.en, code)) return code;
+    // Older receivers report Chinese messages; normalize known cases instead
+    // of showing untranslated server strings or untrusted error details.
+    if (/管理员|administrator/i.test(message || '')) return 'windows_elevation';
+    if (/辅助功能|Accessibility/i.test(message || '')) {
+      return /重新|重启|reopen|relaunch/i.test(message || '') ? 'accessibility_relaunch' : 'accessibility_permission';
+    }
+    return fallback;
+  }
   function errorMessage(error) {
-    if (error.status === 401 || error.status === 403) return '配对码无效';
-    if (error.status === 409) return error.message && error.message.length <= 200 && error.message !== '操作失败' ? error.message : '电脑未接收输入';
-    if (error.status === 400) return '操作失败';
-    if (error.name === 'AbortError') return '连接超时';
-    return error.message && error.message.length <= 24 ? error.message : '操作失败';
+    if (error.status === 401 || error.status === 403) return 'invalid_token';
+    if (error.status === 409) return serverErrorKey(error.errorCode, error.message);
+    if (error.status === 400) return 'invalid_request';
+    if (error.name === 'AbortError') return 'timeout';
+    return serverErrorKey(error.errorCode, error.message, 'invalid_request');
   }
   async function request(path, options = {}) {
     const controller = new AbortController();
@@ -78,57 +182,78 @@
     try {
       const response = await fetch(path, {cache: 'no-store', ...options, signal: controller.signal});
       let result;
-      try { result = await response.json(); } catch (_) { throw new Error('响应异常'); }
+      try { result = await response.json(); } catch (_) { throw localError('invalidResponse'); }
       if (!response.ok || result.ok === false) {
-        const error = new Error(result.error || '操作失败');
+        const error = new Error(result.error || '');
         error.status = response.status;
+        error.errorCode = result.errorCode;
         throw error;
       }
       return result;
     } catch (error) {
-      if (error instanceof TypeError) throw new Error('连接断开');
+      if (error instanceof TypeError) throw localError('disconnected');
       throw error;
     } finally { clearTimeout(timeout); }
   }
-  async function checkConnection() {
-    const version = ++statusVersion;
-    $('connectionButton').setAttribute('aria-label', '正在连接，打开连接设置');
-    $('statusDot').className = 'status-dot';
-    $('connectionMessage').textContent = '';
+  function cancelStatusTimer() { if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; } }
+  function scheduleConnectionCheck() {
+    cancelStatusTimer();
+    if (retryBlocked || document.hidden || navigator.onLine === false) return;
+    // Poll gently when healthy and back off to a bounded rate while the
+    // receiver restarts. Never replay input accumulated during a disconnect.
+    const delay = connected ? 5000 : Math.min(15000, 1000 * 2 ** Math.min(reconnectFailures, 4));
+    statusTimer = setTimeout(() => { statusTimer = null; checkConnection(); }, delay);
+  }
+  async function checkConnection(manual = false) {
+    cancelStatusTimer();
+    if (manual) { retryBlocked = false; reconnectFailures = 0; }
+    if (retryBlocked || document.hidden || navigator.onLine === false) return;
+    if (statusInFlight) { statusCheckQueued = true; return; }
+    statusInFlight = true;
+    const version = ++statusVersion, requestedToken = token, wasConnected = connected;
+    if (!connected) { connectionState = 'connecting'; renderConnection(); }
     $('pairButton').disabled = true;
     try {
-      const result = await request('/api/status' + (token ? '?token=' + encodeURIComponent(token) : ''), {headers: token ? {'X-WatchMouse-Token': token} : {}});
-      if (version !== statusVersion) return;
-      if (result.app !== 'WatchMouse') throw new Error('地址无效');
+      const result = await request('/api/status' + (requestedToken ? '?token=' + encodeURIComponent(requestedToken) : ''), {headers: requestedToken ? {'X-WatchMouse-Token': requestedToken} : {}});
+      if (version !== statusVersion || requestedToken !== token) return;
+      if (result.app !== 'WatchMouse') { retryBlocked = true; throw localError('invalidAddress'); }
       if (!result.paired) {
-        setConnection(false, '输入配对码');
+        retryBlocked = true;
+        setConnection(false, token ? 'invalid_token' : 'enterPairing');
         feedback();
         return;
       }
       storage.set('watchmouse_token', token);
       if (result.inputReady === false) {
-        const message = result.inputError || '电脑输入权限未开启';
-        setConnection(false, message);
-        feedback(message, true);
+        const key = serverErrorKey(result.inputErrorCode, result.inputError, 'inputPermission');
+        setConnection(false, key); feedback(key, true);
+        reconnectFailures++;
         return;
       }
+      reconnectFailures = 0;
       setConnection(true);
-      setConnectionPanel(false);
+      if (!wasConnected || manual) setConnectionPanel(false);
       feedback();
     } catch (error) {
-      if (version !== statusVersion) return;
-      const message = errorMessage(error);
-      setConnection(false, message);
-      feedback();
-    } finally { if (version === statusVersion) $('pairButton').disabled = false; }
+      if (version !== statusVersion || requestedToken !== token) return;
+      const key = errorMessage(error);
+      if (key === 'invalid_token') retryBlocked = true;
+      reconnectFailures++;
+      setConnection(false, key); feedback();
+    } finally {
+      statusInFlight = false;
+      $('pairButton').disabled = false;
+      if (statusCheckQueued) { statusCheckQueued = false; checkConnection(); }
+      else scheduleConnectionCheck();
+    }
   }
 
   // Serialize input and merge adjacent motion packets to preserve distance
   // without issuing a network request for every touch sample.
   function enqueue(item) {
     if (!connected) {
-      if (item.reject) item.reject(new Error('未连接'));
-      feedback('未连接', true);
+      if (item.reject) item.reject(localError('notConnected'));
+      feedback('notConnected', true);
       setConnectionPanel(true);
       return;
     }
@@ -158,20 +283,27 @@
           if (!amount) continue;
           payload = {command: 'S ' + amount};
         }
+        const epoch = inputEpoch;
         try {
           await request('/api/command', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-WatchMouse-Token': token}, body: JSON.stringify({...payload, token})});
+          if (epoch !== inputEpoch) { if (item.reject) item.reject(localError('notConnected')); continue; }
           if (item.resolve) item.resolve();
           feedback();
         } catch (error) {
           if (item.reject) item.reject(error);
+          if (epoch !== inputEpoch) continue;
           while (queue.length) {
             const dropped = queue.shift();
             if (dropped.reject) dropped.reject(error);
           }
           pendingX = pendingY = pendingScroll = pendingRailScroll = 0;
           const message = errorMessage(error);
+          statusVersion++;
           setConnection(false, message);
           feedback(message, true);
+          if (message === 'invalid_token') retryBlocked = true;
+          reconnectFailures = 0;
+          scheduleConnectionCheck();
         }
       }
     } finally { draining = false; }
@@ -193,9 +325,11 @@
 
   $('connectionButton').addEventListener('click', () => setConnectionPanel($('connectionPanel').hidden));
   $('pairButton').addEventListener('click', () => {
-    token = $('pairingCode').value.trim();
+    const nextToken = $('pairingCode').value.trim();
+    if (nextToken !== token) { statusVersion++; setConnection(false, 'notConnected'); }
+    token = nextToken;
     refreshWatchLink();
-    checkConnection();
+    checkConnection(true);
   });
   $('pairingCode').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); $('pairButton').click(); } });
   $('sensitivity').addEventListener('input', event => { sensitivity = Number(event.target.value); storage.set('watchmouse_sensitivity', String(sensitivity)); });
@@ -213,11 +347,11 @@
 
   function updateDragUI() {
     $('dragButton').setAttribute('aria-pressed', String(dragActive));
-    $('dragButton').setAttribute('aria-label', dragActive ? '拖动已开启，点击松开左键' : '拖动，点击按住左键');
+    $('dragButton').setAttribute('aria-label', t(dragActive ? 'dragOn' : 'dragOff'));
     $('touchpad').classList.toggle('dragging', dragActive);
   }
   $('dragButton').addEventListener('click', () => {
-    if (!connected) { feedback('未连接', true); setConnectionPanel(true); return; }
+    if (!connected) { feedback('notConnected', true); setConnectionPanel(true); return; }
     dragActive = !dragActive;
     updateDragUI();
     sendQuietly({command: dragActive ? 'MD' : 'MU'});
@@ -237,7 +371,7 @@
   pad.addEventListener('pointerdown', event => {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     event.preventDefault();
-    if (!connected) { feedback('未连接', true); setConnectionPanel(true); return; }
+    if (!connected) { feedback('notConnected', true); setConnectionPanel(true); return; }
     pad.setPointerCapture(event.pointerId);
     pointers.set(event.pointerId, {x: event.clientX, y: event.clientY});
     if (pointers.size === 1) gesture = {started: performance.now(), moved: 0, multi: false, center: centroid()};
@@ -295,7 +429,7 @@
     event.preventDefault();
     event.stopPropagation();
     if (railPointer || (event.pointerType === 'mouse' && event.button !== 0)) return;
-    if (!connected) { feedback('未连接', true); setConnectionPanel(true); return; }
+    if (!connected) { feedback('notConnected', true); setConnectionPanel(true); return; }
     scrollSurface.setPointerCapture(event.pointerId);
     railPointer = {id: event.pointerId, y: event.clientY};
     scrollSurface.classList.add('active');
@@ -343,7 +477,7 @@
   $('textInput').addEventListener('compositionend', () => { composing = false; textFeedback(); });
   function updateDeleteLabel() {
     const hasDraft = $('textInput').value.length > 0;
-    $('deleteTextButton').setAttribute('aria-label', hasDraft ? '删除草稿中光标左侧的文字或选中文字' : '在电脑当前窗口按退格，删除光标左侧文字');
+    $('deleteTextButton').setAttribute('aria-label', t(hasDraft ? 'deleteDraft' : 'deleteComputer'));
   }
   $('textInput').addEventListener('input', () => { inputVersion++; updateDeleteLabel(); textFeedback(); });
   updateDeleteLabel();
@@ -351,7 +485,7 @@
     // Segment the complete string, so emoji families and combining marks are
     // removed together, even if a selection was placed inside a character.
     const segments = typeof Intl !== 'undefined' && Intl.Segmenter
-      ? Array.from(new Intl.Segmenter('zh', {granularity: 'grapheme'}).segment(text), item => ({index: item.index, length: item.segment.length}))
+      ? Array.from(new Intl.Segmenter(language, {granularity: 'grapheme'}).segment(text), item => ({index: item.index, length: item.segment.length}))
       : Array.from(text).reduce((list, character) => {
           const index = list.length ? list[list.length - 1].index + list[list.length - 1].length : 0;
           list.push({index, length: character.length});
@@ -363,7 +497,7 @@
     const input = $('textInput');
     input.focus({preventScroll: true});
     if (composing || speechListening) {
-      textFeedback(composing ? '请先完成选字' : '请先停止语音', true);
+      textFeedback(composing ? 'finishComposition' : 'stopSpeechFirst', true);
       return;
     }
     textFeedback();
@@ -385,8 +519,8 @@
   $('sendTextButton').addEventListener('click', async () => {
     const input = $('textInput');
     const text = input.value;
-    if (composing) { textFeedback('请先完成选字', true); return; }
-    if (speechListening) { textFeedback('请先停止语音', true); return; }
+    if (composing) { textFeedback('finishComposition', true); return; }
+    if (speechListening) { textFeedback('stopSpeechFirst', true); return; }
     if (!text) { input.focus(); textFeedback(); return; }
     const sentVersion = inputVersion;
     $('sendTextButton').disabled = true;
@@ -406,23 +540,23 @@
   if (window.isSecureContext && Recognition) {
     $('speechButton').hidden = false;
     speech = new Recognition();
-    speech.lang = 'zh-CN';
+    speech.lang = language === 'zh' ? 'zh-CN' : 'en-US';
     speech.continuous = false;
     speech.interimResults = true;
     let startingText = '';
-    speech.onstart = () => { speechListening = true; $('speechButton').textContent = '■'; $('speechButton').setAttribute('aria-label', '停止语音'); textFeedback(); };
+    speech.onstart = () => { speechListening = true; $('speechButton').textContent = '■'; $('speechButton').setAttribute('aria-label', t('stopSpeech')); textFeedback(); };
     speech.onresult = event => {
       const transcript = Array.from(event.results).map(result => result[0].transcript).join('');
       $('textInput').value = (startingText + transcript).slice(0, 4000);
       inputVersion++;
       updateDeleteLabel();
     };
-    speech.onend = () => { speechListening = false; $('speechButton').textContent = '🎙'; $('speechButton').setAttribute('aria-label', '浏览器语音输入'); };
-    speech.onerror = () => { speechListening = false; $('speechButton').textContent = '🎙'; $('speechButton').setAttribute('aria-label', '浏览器语音输入'); textFeedback('语音不可用', true); };
+    speech.onend = () => { speechListening = false; $('speechButton').textContent = '🎙'; $('speechButton').setAttribute('aria-label', t('speech')); };
+    speech.onerror = () => { speechListening = false; $('speechButton').textContent = '🎙'; $('speechButton').setAttribute('aria-label', t('speech')); textFeedback('speechUnavailable', true); };
     $('speechButton').addEventListener('click', () => {
       if (speechListening) { speech.stop(); return; }
       startingText = $('textInput').value;
-      try { speech.start(); } catch (_) { textFeedback('语音不可用', true); }
+      try { speech.start(); } catch (_) { textFeedback('speechUnavailable', true); }
     });
   }
 
@@ -449,13 +583,13 @@
     $('touchIndicator').hidden = true;
   }
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) releaseDragOnLeave();
+    if (document.hidden) { cancelStatusTimer(); statusVersion++; releaseDragOnLeave(); discardInput(); }
     else checkConnection();
   });
   window.addEventListener('pagehide', releaseDragOnLeave);
   window.addEventListener('blur', releaseDragOnLeave);
-  window.addEventListener('online', checkConnection);
-  window.addEventListener('offline', () => { setConnection(false, '网络断开'); feedback(); });
+  window.addEventListener('online', () => checkConnection());
+  window.addEventListener('offline', () => { cancelStatusTimer(); statusVersion++; setConnection(false, 'networkOffline'); feedback(); });
   function syncViewport() {
     const viewport = window.visualViewport;
     const height = viewport ? viewport.height : window.innerHeight;
@@ -476,5 +610,6 @@
   }, 2000);
   syncViewport();
   setMode(savedMode);
+  applyLanguage();
   checkConnection();
 })();

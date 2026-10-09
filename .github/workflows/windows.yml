@@ -33,6 +33,11 @@ jobs:
           $unicodeRoot = Join-Path $env:RUNNER_TEMP '手机鼠标-构建'
           New-Item -ItemType Directory -Path $unicodeRoot -Force | Out-Null
           Get-ChildItem -LiteralPath $env:GITHUB_WORKSPACE -Force | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $unicodeRoot -Recurse -Force }
+          # Use the same setup-python interpreter as the tests, rather than
+          # the launcher's latest separately registered Python version.
+          $buildVenv = Join-Path $unicodeRoot 'Windows\Windows\.build-venv'
+          python -m venv $buildVenv
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to create the Python 3.12 build environment.' }
           & (Join-Path $unicodeRoot 'Windows\Windows\build.ps1')
           if ($LASTEXITCODE -ne 0) { throw 'Build failed in Unicode source path.' }
           $output = Join-Path $env:GITHUB_WORKSPACE 'Windows\Windows\dist'

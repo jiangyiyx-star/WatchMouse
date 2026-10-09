@@ -15,6 +15,7 @@ The MIT license applies to WatchMouse's source. It does not replace licenses of 
 | [mpdecimal](https://github.com/python/cpython-source-deps/blob/mpdecimal-4.0.0/COPYRIGHT.txt) | Python decimal arithmetic | BSD 2-Clause |
 | [Expat](https://github.com/libexpat/libexpat/blob/R_2_8_2/expat/COPYING) | Python XML parser | MIT |
 | [LibTomMath](https://github.com/libtom/libtommath/blob/master/LICENSE) | Tcl arithmetic library | Public domain / Unlicense |
+| [Microsoft C/C++ runtime](https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files) | Windows Python runtime dependencies | Microsoft redistribution terms; excluded from WatchMouse's MIT license |
 
 Development/CI uses Node.js for frontend tests and browser tools for screenshots. They are not part of the phone UI, which has no third-party JavaScript dependencies.
 

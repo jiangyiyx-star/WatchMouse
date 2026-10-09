@@ -92,13 +92,20 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
 
   const statusResult = {app: 'WatchMouse', paired: true, ...inputStatus};
   let active = 0, maxActive = 0, failure = null;
+  const dragState = {held: false}, commandEffects = [];
+  const browserLocation = {href: options.href || 'http://192.168.1.5:53514/?token=testtoken123456789', host: '192.168.1.5:53514'};
+  const historyUpdates = [];
+  if (!options.noHistory) window.history = {replaceState(_state, _title, href) { browserLocation.href = String(href); historyUpdates.push(browserLocation.href); }};
   const sandbox = {
     console, document, window, URL, Map, Promise, Math, Number, TypeError, Error, JSON, Array, Blob, Event, Intl,
     AbortController, setTimeout: scheduleTimeout, clearTimeout: cancelTimeout, setInterval: () => 0, performance,
-    location: {href: options.href || 'http://192.168.1.5:53514/?token=testtoken123456789', host: '192.168.1.5:53514'},
+    location: browserLocation,
     localStorage: {getItem: key => stored.get(key) || null, setItem: (key, value) => stored.set(key, value)},
     matchMedia: () => ({matches: false}), requestAnimationFrame: callback => callback(),
-    navigator: {onLine: true, sendBeacon: () => true},
+    navigator: {onLine: true, sendBeacon: () => {
+      if (options.simulateDragRace) { dragState.held = false; commandEffects.push('beacon MU'); }
+      return true;
+    }},
     fetch: async (url, requestOptions) => {
       if (url.startsWith('/api/status')) {
         statusActive++; maxStatusActive = Math.max(maxStatusActive, statusActive);
@@ -109,12 +116,16 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
         return {ok: true, json: async () => ({...statusResult})};
       }
       active++; maxActive = Math.max(maxActive, active);
-      records.push(JSON.parse(requestOptions.body));
+      const packet = JSON.parse(requestOptions.body);
+      records.push(packet);
       await new Promise(resolve => setTimeout(resolve, 2));
       active--;
       if (failure) {
         const {status, error, errorCode} = failure; failure = null;
         return {ok: false, status, json: async () => ({ok: false, error, errorCode})};
+      }
+      if (options.simulateDragRace && ['MD', 'MU'].includes(packet.command)) {
+        dragState.held = packet.command === 'MD'; commandEffects.push(packet.command);
       }
       return {ok: true, json: async () => ({ok: true})};
     }
@@ -125,7 +136,7 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
     elements.textInput.setSelectionRange(start, end);
     elements.textInput.emit('input');
   }
-  return {elements, document, window, commands, keys, modes, records, stored, draft, statusRequests, timers, runStatusTimer, maxStatusActive: () => maxStatusActive, maxActive: () => maxActive, failNext: (status, error, errorCode) => {failure = {status, error, errorCode};}, setStatusFailure: fail => {statusFailure = fail;}, setStatus: update => Object.assign(statusResult, update)};
+  return {elements, document, window, dragState, commandEffects, location: browserLocation, historyUpdates, commands, keys, modes, records, stored, draft, statusRequests, timers, runStatusTimer, maxStatusActive: () => maxStatusActive, maxActive: () => maxActive, failNext: (status, error, errorCode) => {failure = {status, error, errorCode};}, setStatusFailure: fail => {statusFailure = fail;}, setStatus: update => Object.assign(statusResult, update)};
 }
 
 (async () => {
@@ -320,6 +331,23 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
   assert.equal(reopened.document.documentElement.lang, 'zh-CN', 'language persists after reopening');
   assert.equal(reopened.statusRequests[0].token, 'testtoken123456789', 'saved pairing works without QR token');
   assert.equal(reopened.elements.connectionButton.attributes['aria-label'], '已连接，打开连接设置');
+  const correctedLink = createApp(null, {paired: false}, {
+    href: 'http://192.168.1.5:53514/?token=old-pairing-key&view=mobile#controls'
+  }); await wait();
+  assert.equal(correctedLink.historyUpdates.length, 0, 'invalid pairing does not rewrite the URL');
+  correctedLink.setStatus({paired: true, inputReady: false, inputErrorCode: 'accessibility_permission'});
+  correctedLink.elements.pairingCode.value = 'new-pairing-key'; correctedLink.elements.pairButton.click(); await wait();
+  assert.equal(correctedLink.stored.get('watchmouse_token'), 'new-pairing-key');
+  const correctedUrl = new URL(correctedLink.location.href);
+  assert.equal(correctedUrl.searchParams.get('token'), 'new-pairing-key', 'manual correction replaces stale QR key even before input permission');
+  assert.equal(correctedUrl.searchParams.get('view'), 'mobile');
+  assert.equal(correctedUrl.hash, '#controls');
+  const correctedReload = createApp(null, {}, {stored: correctedLink.stored, href: correctedLink.location.href}); await wait();
+  assert.equal(correctedReload.statusRequests[0].token, 'new-pairing-key', 'reload uses the corrected key from the updated URL');
+  assert.equal(correctedReload.elements.connectionButton.attributes['aria-label'], 'Connected; open connection settings');
+  const historyUnavailable = createApp(null, {}, {noHistory: true}); await wait();
+  assert.equal(historyUnavailable.elements.connectionButton.attributes['aria-label'], 'Connected; open connection settings', 'unavailable History API does not interrupt pairing');
+  assert.equal(historyUnavailable.stored.get('watchmouse_token'), 'testtoken123456789');
   const speechApp = createApp(null, {}, {secureSpeech: true}); await wait();
   assert.equal(speechApp.window.recognition.lang, 'en-US');
   speechApp.elements.languageSelect.value = 'zh'; speechApp.elements.languageSelect.emit('change');
@@ -353,6 +381,21 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
   assert.equal(reconnect.statusRequests.length, hiddenCount, 'hidden page does not issue status requests');
   reconnect.document.hidden = false; reconnect.document.emit('visibilitychange'); await wait();
   assert.equal(reconnect.statusRequests.length, hiddenCount + 1);
+
+  const hiddenDrag = createApp(null, {}, {simulateDragRace: true}); await wait();
+  hiddenDrag.elements.dragButton.click(); // MD is now in flight.
+  hiddenDrag.commands.find(button => button.dataset.command === 'C').click(); // Queued click ends this drag in the UI.
+  hiddenDrag.elements.dragButton.click(); // A new queued drag is also stale when the page hides.
+  hiddenDrag.keys[0].click(); // A queued video key must be discarded.
+  hiddenDrag.draft('Do not send this old draft'); hiddenDrag.elements.sendTextButton.click();
+  hiddenDrag.document.hidden = true; hiddenDrag.document.emit('visibilitychange');
+  await wait();
+  assert.deepEqual(hiddenDrag.records.map(packet => packet.command), ['MD', 'MU'], 'only ordered mouse-up survives hidden-page cleanup');
+  assert.deepEqual(hiddenDrag.commandEffects, ['beacon MU', 'MD', 'MU'], 'ordered release follows mouse-down when the beacon arrives early');
+  assert.equal(hiddenDrag.dragState.held, false, 'receiver does not remain in drag after the page is hidden');
+  assert.equal(hiddenDrag.elements.textInput.value, 'Do not send this old draft', 'discarded queued text stays in the draft');
+  hiddenDrag.document.hidden = false; hiddenDrag.document.emit('visibilitychange'); await wait();
+  assert.equal(hiddenDrag.records.length, 2, 'resuming does not replay dropped clicks, mouse-down, keys or text');
 
   const wrongToken = createApp(null, {paired: false}); await wait();
   assert.equal(wrongToken.elements.connectionMessage.textContent, 'Invalid pairing code. Check the code in the receiver.');

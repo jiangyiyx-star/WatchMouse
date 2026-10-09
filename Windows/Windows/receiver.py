@@ -295,6 +295,9 @@ class Handler(BaseHTTPRequestHandler):
             "发送文字": "Send text", "每点一次执行一次。请先在电脑选中输入框。": "One action per tap. Focus an input on your computer first.",
             "手机触控板版": "Phone trackpad", "连接正常": "Connected", "已执行": "Done",
             "操作已处理或链接已过期，请重新点击按钮": "Already handled or expired. Tap a fresh button.",
+            "Windows 未接受输入。请确认目标窗口没有以管理员身份运行。": "Windows rejected input. Use a target app that is not running as administrator.",
+            "请输入 1–4000 字的文字": "Enter 1–4000 characters of text.",
+            "文字包含无效字符": "The text contains an invalid character.",
             "请在 Mac 系统设置 → 隐私与安全性 → 辅助功能中允许 WatchMouse": "Allow WatchMouse in Mac System Settings → Privacy & Security → Accessibility.",
         }
         def t(value):

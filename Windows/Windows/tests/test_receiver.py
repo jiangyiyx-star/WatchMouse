@@ -441,6 +441,15 @@ class ReceiverProtocolTests(unittest.TestCase):
         self.assertEqual(303, status)
         self.assertEqual(['zh-CN'], parse_qs(urlparse(headers['Location']).query)['lang'])
 
+    def test_watch_localizes_known_windows_input_denial(self):
+        self.controller.sender = Mock(side_effect=OSError('Windows 未接受输入。请确认目标窗口没有以管理员身份运行。'))
+        nonce = self.server.register_watch_action('C')
+        status, headers, _ = self.request(path='/watch?' + urlencode({'token':'test-token','action':nonce,'lang':'en'}))
+        self.assertEqual(303,status)
+        _, _, page = self.request(path=headers['Location'])
+        self.assertIn('Windows rejected input',page)
+        self.assertNotIn('Windows 未接受输入',page)
+
     def test_unknown_paths_do_not_expose_files(self):
         for path in ("/receiver.py", "/../receiver.py", "/%2e%2e/receiver.py", "/config.json"):
             self.assertEqual(404, self.request(path=path)[0])
@@ -453,8 +462,6 @@ class ReceiverProtocolTests(unittest.TestCase):
         self.assertEqual(-1, self.server.socket.fileno())
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 class PairingPersistenceTests(unittest.TestCase):
     def test_settings_keep_pairing_key_across_restart_and_language_change(self):
@@ -469,3 +476,7 @@ class PairingPersistenceTests(unittest.TestCase):
                     again=receiver.load_settings()
                     self.assertEqual(token,again['token'])
                     self.assertEqual('zh-CN',again['language'])
+
+
+if __name__ == "__main__":
+    unittest.main()

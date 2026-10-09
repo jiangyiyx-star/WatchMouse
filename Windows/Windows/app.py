@@ -125,6 +125,82 @@ class LocalizedStringVar(tk.StringVar):
 POWERSHELL_UTF8 = "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false); $OutputEncoding = [Console]::OutputEncoding; "
 
 
+def capture_windows_client(window_id, expected_size):
+    """Ask the native window to paint its full client, including off-screen rows."""
+    from ctypes import wintypes
+    from PIL import Image
+
+    class BitmapInfoHeader(ctypes.Structure):
+        _fields_ = [
+            ("size", wintypes.DWORD), ("width", wintypes.LONG),
+            ("height", wintypes.LONG), ("planes", wintypes.WORD),
+            ("bit_count", wintypes.WORD), ("compression", wintypes.DWORD),
+            ("image_size", wintypes.DWORD), ("x_pels", wintypes.LONG),
+            ("y_pels", wintypes.LONG), ("colors_used", wintypes.DWORD),
+            ("colors_important", wintypes.DWORD),
+        ]
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+    signatures = (
+        (user32.GetAncestor, (wintypes.HWND, wintypes.UINT), wintypes.HWND),
+        (user32.GetClientRect, (wintypes.HWND, ctypes.POINTER(wintypes.RECT)), wintypes.BOOL),
+        (user32.GetDC, (wintypes.HWND,), wintypes.HDC),
+        (user32.ReleaseDC, (wintypes.HWND, wintypes.HDC), ctypes.c_int),
+        (user32.PrintWindow, (wintypes.HWND, wintypes.HDC, wintypes.UINT), wintypes.BOOL),
+        (gdi32.CreateCompatibleDC, (wintypes.HDC,), wintypes.HDC),
+        (gdi32.CreateDIBSection, (wintypes.HDC, ctypes.c_void_p, wintypes.UINT, ctypes.POINTER(ctypes.c_void_p), wintypes.HANDLE, wintypes.DWORD), wintypes.HBITMAP),
+        (gdi32.SelectObject, (wintypes.HDC, wintypes.HGDIOBJ), wintypes.HGDIOBJ),
+        (gdi32.DeleteObject, (wintypes.HGDIOBJ,), wintypes.BOOL),
+        (gdi32.DeleteDC, (wintypes.HDC,), wintypes.BOOL),
+        (gdi32.GdiFlush, (), wintypes.BOOL),
+    )
+    for function, arguments, result in signatures:
+        function.argtypes, function.restype = arguments, result
+    window = user32.GetAncestor(window_id, 2)  # GA_ROOT: the Tk wrapper window.
+    rect = wintypes.RECT()
+    if not window or not user32.GetClientRect(window, ctypes.byref(rect)):
+        raise OSError("Cannot inspect the native demo window.")
+    size = (rect.right - rect.left, rect.bottom - rect.top)
+    if size != expected_size or min(size) <= 0:
+        raise OSError(f"Native demo client is {size}; expected {expected_size}.")
+    width, height = size
+    header = BitmapInfoHeader()
+    header.size, header.width, header.height = ctypes.sizeof(header), width, -height
+    header.planes, header.bit_count = 1, 32
+    bits = ctypes.c_void_p()
+    source_dc = memory_dc = bitmap = original = None
+    try:
+        source_dc = user32.GetDC(window)
+        memory_dc = gdi32.CreateCompatibleDC(source_dc) if source_dc else None
+        if not memory_dc:
+            raise OSError("Cannot allocate the native demo capture context.")
+        bitmap = gdi32.CreateDIBSection(source_dc, ctypes.byref(header), 0, ctypes.byref(bits), None, 0)
+        if not bitmap or not bits.value:
+            raise OSError("Cannot allocate the native demo capture bitmap.")
+        original = gdi32.SelectObject(memory_dc, bitmap)
+        if not original or original == ctypes.c_void_p(-1).value:
+            raise OSError("Cannot select the native demo capture bitmap.")
+        # PW_CLIENTONLY | PW_RENDERFULLCONTENT renders this window into our DIB;
+        # screen bounds and other windows do not enter the captured pixels.
+        if not user32.PrintWindow(window, memory_dc, 1 | 2):
+            raise OSError("PrintWindow did not render the native demo window.")
+        gdi32.GdiFlush()
+        image = Image.frombytes("RGB", size, ctypes.string_at(bits, width * height * 4), "raw", "BGRX", 0, 1)
+        if all(low == high for low, high in image.getextrema()) or image.crop((0, height * 2 // 3, width, height)).getbbox() is None:
+            raise OSError("Native demo capture is blank or missing its lower section.")
+        return image
+    finally:
+        if original and original != ctypes.c_void_p(-1).value:
+            gdi32.SelectObject(memory_dc, original)
+        if bitmap:
+            gdi32.DeleteObject(bitmap)
+        if memory_dc:
+            gdi32.DeleteDC(memory_dc)
+        if source_dc:
+            user32.ReleaseDC(window, source_dc)
+
+
 def setup_logging():
     APP_DIR.mkdir(parents=True, exist_ok=True)
     handler = RotatingFileHandler(APP_DIR / "desktop.log", maxBytes=500_000, backupCount=2, encoding="utf-8")
@@ -306,12 +382,11 @@ class WatchMouseApp:
     def capture_demo(self, output):
         """Capture this real demo window; never include live pairing settings."""
         try:
-            from PIL import ImageGrab
             self.root.update_idletasks()
-            x, y = self.root.winfo_rootx(), self.root.winfo_rooty()
+            image = capture_windows_client(self.root.winfo_id(), (self.root.winfo_width(), self.root.winfo_height()))
             path = Path(output)
             path.parent.mkdir(parents=True, exist_ok=True)
-            ImageGrab.grab(bbox=(x, y, x + self.root.winfo_width(), y + self.root.winfo_height())).save(path)
+            image.save(path)
         except Exception as exc:
             self.screenshot_error = exc
             logging.exception("Demo screenshot failed")

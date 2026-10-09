@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import ctypes
 import json
 from pathlib import Path
 import sys
@@ -185,6 +186,74 @@ class DesktopLanguageTests(unittest.TestCase):
         self.assertIn("O''Brien", script)
         self.assertEqual("utf-8", run.call_args.kwargs["encoding"])
         self.assertIn("-Profile Private -RemoteAddress LocalSubnet", script)
+
+    def native_capture(self, *, print_ok=True, black_bottom=False, expected_size=(8, 9)):
+        user32, gdi32 = Mock(), Mock()
+        user32.GetAncestor.return_value = 456
+        user32.GetDC.return_value = 11
+        user32.PrintWindow.return_value = int(print_ok)
+        gdi32.CreateCompatibleDC.return_value = 22
+        gdi32.SelectObject.return_value = 44
+        width, height = 8, 9
+        pixels = bytes(component for y in range(height) for x in range(width) for component in ((0, 0, 0, 0) if black_bottom and y >= 6 else (32, 17, 11 + x, 0)))
+        buffer = ctypes.create_string_buffer(pixels)
+
+        def rectangle(_window, pointer):
+            pointer._obj.left = pointer._obj.top = 0
+            pointer._obj.right, pointer._obj.bottom = width, height
+            return 1
+
+        def bitmap(_dc, _header, _usage, bits, _section, _offset):
+            bits._obj.value = ctypes.addressof(buffer)
+            return 33
+
+        user32.GetClientRect.side_effect = rectangle
+        gdi32.CreateDIBSection.side_effect = bitmap
+        libraries = {"user32": user32, "gdi32": gdi32}
+        patcher = patch.object(desktop.ctypes, "WinDLL", side_effect=lambda name, **kwargs: libraries[name], create=True)
+        return user32, gdi32, patcher, expected_size
+
+    def test_native_capture_prints_complete_client_without_desktop_pixels(self):
+        user32, gdi32, native, size = self.native_capture()
+        with native:
+            image = desktop.capture_windows_client(123, size)
+        self.assertEqual(size, image.size)
+        self.assertEqual((18, 17, 32), image.getpixel((7, 8)))
+        user32.GetAncestor.assert_called_once_with(123, 2)
+        user32.PrintWindow.assert_called_once_with(456, 22, 3)
+        gdi32.DeleteObject.assert_called_once_with(33)
+        gdi32.DeleteDC.assert_called_once_with(22)
+        user32.ReleaseDC.assert_called_once_with(456, 11)
+
+    def test_native_capture_fails_explicitly_and_cleans_up_when_printwindow_fails(self):
+        user32, gdi32, native, size = self.native_capture(print_ok=False)
+        with native, self.assertRaisesRegex(OSError, "PrintWindow"):
+            desktop.capture_windows_client(123, size)
+        gdi32.DeleteObject.assert_called_once_with(33)
+        gdi32.DeleteDC.assert_called_once_with(22)
+        user32.ReleaseDC.assert_called_once_with(456, 11)
+
+    def test_native_capture_rejects_missing_lower_section(self):
+        user32, gdi32, native, size = self.native_capture(black_bottom=True)
+        with native, self.assertRaisesRegex(OSError, "missing its lower"):
+            desktop.capture_windows_client(123, size)
+        gdi32.DeleteObject.assert_called_once_with(33)
+
+    def test_native_capture_rejects_incorrect_client_dimensions(self):
+        user32, gdi32, native, size = self.native_capture(expected_size=(8, 10))
+        with native, self.assertRaisesRegex(OSError, "expected"):
+            desktop.capture_windows_client(123, size)
+        user32.PrintWindow.assert_not_called()
+
+    def test_demo_capture_failure_exits_without_saving_clipped_image(self):
+        app = self.app(demo=True)
+        app.root.destroy = Mock()
+        output = Path(self.temp.name) / "screenshot.png"
+        with patch.object(desktop, "capture_windows_client", side_effect=OSError("PrintWindow failed")), self.assertLogs(level="ERROR"):
+            app.capture_demo(output)
+        self.assertIsInstance(app.screenshot_error, OSError)
+        app.root.destroy.assert_called_once()
+        self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":

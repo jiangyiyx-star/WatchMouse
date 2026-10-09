@@ -134,12 +134,18 @@
     if (speechListening && speech) speech.stop();
     applyLanguage();
   });
-  function discardInput(messageKey = 'notConnected') {
+  function discardInput(messageKey = 'notConnected', preserveRelease = false) {
     inputEpoch++;
+    const releases = [];
     while (queue.length) {
       const item = queue.shift();
-      if (item.reject) item.reject(localError(messageKey));
+      // Only the ordered mouse-up may survive hidden-page cleanup. It must
+      // follow an in-flight mouse-down even if the beacon reaches the receiver
+      // first; clicks, text, keys and motion are always discarded.
+      if (preserveRelease && item.kind === 'command' && item.payload.command === 'MU' && Object.keys(item.payload).length === 1) releases.push(item);
+      else if (item.reject) item.reject(localError(messageKey));
     }
+    queue.push(...releases);
     if (motionTimer) { clearTimeout(motionTimer); motionTimer = null; }
     pendingX = pendingY = pendingScroll = pendingRailScroll = 0;
     clearRailGesture();
@@ -224,6 +230,15 @@
         return;
       }
       storage.set('watchmouse_token', token);
+      // A manually corrected key must also replace an old QR key in the URL;
+      // otherwise reloading or bookmarking the page restores the stale key.
+      try {
+        const pairedUrl = new URL(location.href);
+        pairedUrl.searchParams.set('token', token);
+        if (window.history && typeof window.history.replaceState === 'function') {
+          window.history.replaceState(null, '', pairedUrl.href);
+        }
+      } catch (_) {}
       if (result.inputReady === false) {
         const key = serverErrorKey(result.inputErrorCode, result.inputError, 'inputPermission');
         setConnection(false, key); feedback(key, true);
@@ -583,7 +598,7 @@
     $('touchIndicator').hidden = true;
   }
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { cancelStatusTimer(); statusVersion++; releaseDragOnLeave(); discardInput(); }
+    if (document.hidden) { cancelStatusTimer(); statusVersion++; releaseDragOnLeave(); discardInput('notConnected', true); }
     else checkConnection();
   });
   window.addEventListener('pagehide', releaseDragOnLeave);

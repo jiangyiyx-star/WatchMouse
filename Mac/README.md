@@ -6,11 +6,11 @@
 
 从 [Mac 下载页](https://github.com/jiangyiyx-star/WatchMouse/releases/tag/v2.3-mac.2) 下载 `WatchMouse-Mac-2.3.1-arm64.zip`。当前下载包面向 Apple 芯片 Mac，最低 macOS 11；Intel Mac 可在 Intel 机器上从源码构建，尚未验证 Intel 下载包。
 
-1. 解压，将 `WatchMouse.app` 拖到“应用程序”后打开。
+1. 解压，将 `WatchMouse.app` 拖到“应用程序”，以后从 `/Applications/WatchMouse.app` 启动。
 2. 这是自签名构建，尚未经过 Apple 公证。如果 macOS 阻止首次启动，可在系统设置 → 隐私与安全性中确认来源后选择“仍要打开”。
 3. 点“打开辅助功能设置”，在系统设置 → 隐私与安全性 → 辅助功能中添加并启用 `WatchMouse.app`。应用会自动刷新授权状态。手机页面若提示辅助功能权限未开启，开启后回到手机点击“连接”；无需更换配对码。
 4. 手机与 Mac 使用同一 Wi-Fi，扫描窗口二维码。先在 Mac 上点选要控制的窗口。
-5. 关闭窗口或按 Command+Q 会停止接收服务；窗口内也可暂停或重新启动服务。
+5. 使用时保持应用窗口打开。关闭窗口或按 Command+Q 会停止接收服务；窗口内也可暂停或重新启动服务。
 
 支持触控板移动、左/右键、拖动、单指滚动带、双指滚动、方向键、播放/暂停和中文/emoji 输入。手机协议中的 `ctrl` / `win` 在 Mac 上映射为 Command；`alt` 为 Option，`shift` 为 Shift。开发者可用 `control` 发送真正的 Control。
 
@@ -48,7 +48,7 @@ bash Mac/build.sh
 node Windows/Windows/tests/frontend-smoke.cjs
 ```
 
-Mac 测试创建真实 Quartz 事件并拦截最终发送，检查中文/emoji、Command 组合键、拖动超时释放、滚动方向、授权拒绝和 HTTP 接收。它们不会操作桌面。已在 Apple 芯片 Mac 上构建并检查发布包启动、原生窗口、二维码和服务；真实手机、辅助功能授权后的目标应用控制及实体 Apple Watch 仍需人工实测。
+Mac 测试创建真实 Quartz 事件并拦截最终发送，检查中文/emoji、Command 组合键、拖动超时释放、滚动方向、授权拒绝和 HTTP 接收。它们不会操作桌面。已在 Apple 芯片 Mac 上构建并检查发布包启动、原生窗口、二维码和服务。用户已确认辅助功能授权后，真实手机可以连接并控制 Mac；此反馈未覆盖所有手机功能，实体 Apple Watch 尚未实测。
 
 ## 文件结构
 

@@ -27,10 +27,6 @@ jobs:
         run: python -m unittest discover -s Windows/Windows/tests -v
       - name: Test phone interface
         run: node Windows/Windows/tests/frontend-smoke.cjs
-      - name: Capture the desktop demo
-        run: |
-          python Windows/Windows/app.py --demo --language en --screenshot docs/screenshots/windows-desktop.png
-          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath 'docs/screenshots/windows-desktop.png')) { throw 'Desktop demo screenshot was not captured.' }
       - name: Build and verify executable
         shell: powershell
         run: |
@@ -42,6 +38,14 @@ jobs:
           $output = Join-Path $env:GITHUB_WORKSPACE 'Windows\Windows\dist'
           New-Item -ItemType Directory -Path $output -Force | Out-Null
           Copy-Item -LiteralPath (Join-Path $unicodeRoot 'Windows\Windows\dist\WatchMouse-2.4.exe') -Destination $output -Force
+      - name: Launch packaged desktop demo
+        shell: powershell
+        run: |
+          $demoPath = Join-Path $env:GITHUB_WORKSPACE 'docs\screenshots\windows-desktop.png'
+          New-Item -ItemType Directory -Path (Split-Path -Parent $demoPath) -Force | Out-Null
+          $appPath = Join-Path $env:GITHUB_WORKSPACE 'Windows\Windows\dist\WatchMouse-2.4.exe'
+          $demo = Start-Process -FilePath $appPath -ArgumentList @('--demo', '--language', 'en', '--screenshot', ('"' + $demoPath + '"')) -PassThru -Wait
+          if ($demo.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $demoPath)) { throw 'Packaged desktop demo failed to launch or capture.' }
       - uses: actions/upload-artifact@v4
         with:
           name: WatchMouse-Windows

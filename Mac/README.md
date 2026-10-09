@@ -4,11 +4,11 @@
 
 ## 下载使用
 
-从 [Mac 下载页](https://github.com/jiangyiyx-star/WatchMouse/releases/tag/v2.3-mac.1) 下载 `WatchMouse-Mac-2.3-arm64.zip`。当前下载包面向 Apple 芯片 Mac，最低 macOS 11；Intel Mac 可在 Intel 机器上从源码构建，尚未验证 Intel 下载包。
+从 [Mac 下载页](https://github.com/jiangyiyx-star/WatchMouse/releases/tag/v2.3-mac.2) 下载 `WatchMouse-Mac-2.3.1-arm64.zip`。当前下载包面向 Apple 芯片 Mac，最低 macOS 11；Intel Mac 可在 Intel 机器上从源码构建，尚未验证 Intel 下载包。
 
 1. 解压，将 `WatchMouse.app` 拖到“应用程序”后打开。
 2. 这是自签名构建，尚未经过 Apple 公证。如果 macOS 阻止首次启动，可在系统设置 → 隐私与安全性中确认来源后选择“仍要打开”。
-3. 点“打开辅助功能设置”，在系统设置 → 隐私与安全性 → 辅助功能中添加并启用 `WatchMouse.app`。应用会自动刷新授权状态。
+3. 点“打开辅助功能设置”，在系统设置 → 隐私与安全性 → 辅助功能中添加并启用 `WatchMouse.app`。应用会自动刷新授权状态。手机页面若提示辅助功能权限未开启，开启后回到手机点击“连接”；无需更换配对码。
 4. 手机与 Mac 使用同一 Wi-Fi，扫描窗口二维码。先在 Mac 上点选要控制的窗口。
 5. 关闭窗口或按 Command+Q 会停止接收服务；窗口内也可暂停或重新启动服务。
 

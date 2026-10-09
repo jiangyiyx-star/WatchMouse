@@ -12,6 +12,6 @@ exe = EXE(pyz,a.scripts,[],exclude_binaries=True,name='WatchMouse',debug=False,
           bootloader_ignore_signals=False,strip=False,upx=False,console=False)
 coll = COLLECT(exe,a.binaries,a.datas,strip=False,upx=False,name='WatchMouse')
 app = BUNDLE(coll,name='WatchMouse.app',bundle_identifier='com.jiangyiyx.watchmouse',
-             info_plist={'CFBundleShortVersionString':'2.3.0','CFBundleVersion':'230',
+             info_plist={'CFBundleShortVersionString':'2.3.1','CFBundleVersion':'231',
                          'NSHighResolutionCapable':True,
                          'NSLocalNetworkUsageDescription':'让同一 Wi-Fi 的手机连接并控制这台 Mac。'})

@@ -7,7 +7,7 @@ const html = fs.readFileSync(path.join(__dirname, '..', 'remote.html'), 'utf8');
 const source = fs.readFileSync(path.join(__dirname, '..', 'remote.js'), 'utf8');
 const wait = () => new Promise(resolve => setTimeout(resolve, 30));
 
-function createApp(savedMode = null) {
+function createApp(savedMode = null, inputStatus = {}) {
   let document;
   class Element {
     constructor() {
@@ -76,6 +76,7 @@ function createApp(savedMode = null) {
   const window = new Element(); window.isSecureContext = false; window.innerHeight = 640;
   window.visualViewport = new Element(); window.visualViewport.height = 640; window.visualViewport.offsetTop = 0;
   const records = [], stored = new Map(savedMode ? [['watchmouse_mode', savedMode]] : []);
+  const statusResult = {app: 'WatchMouse', paired: true, ...inputStatus};
   let active = 0, maxActive = 0, failure = null;
   const sandbox = {
     console, document, window, URL, Map, Promise, Math, Number, TypeError, Error, JSON, Array, Blob, Event, Intl,
@@ -85,7 +86,7 @@ function createApp(savedMode = null) {
     matchMedia: () => ({matches: false}), requestAnimationFrame: callback => callback(),
     navigator: {sendBeacon: () => true},
     fetch: async (url, options) => {
-      if (url.startsWith('/api/status')) return {ok: true, json: async () => ({app: 'WatchMouse', paired: true})};
+      if (url.startsWith('/api/status')) return {ok: true, json: async () => ({...statusResult})};
       active++; maxActive = Math.max(maxActive, active);
       records.push(JSON.parse(options.body));
       await new Promise(resolve => setTimeout(resolve, 2));
@@ -103,7 +104,7 @@ function createApp(savedMode = null) {
     elements.textInput.setSelectionRange(start, end);
     elements.textInput.emit('input');
   }
-  return {elements, document, window, commands, keys, modes, records, stored, draft, maxActive: () => maxActive, failNext: (status, error) => {failure = {status, error};}};
+  return {elements, document, window, commands, keys, modes, records, stored, draft, maxActive: () => maxActive, failNext: (status, error) => {failure = {status, error};}, setStatus: update => Object.assign(statusResult, update)};
 }
 
 (async () => {
@@ -247,11 +248,39 @@ function createApp(savedMode = null) {
   assert(!elements.connectionPanel.hidden);
   elements.connectionButton.click();
   assert(elements.connectionPanel.hidden);
-  const failed = createApp(); await wait();
-  failed.draft('保留这段草稿'); failed.failNext(409, 'Windows 未接受输入'); failed.elements.sendTextButton.click(); await wait();
-  assert.equal(failed.elements.textInput.value, '保留这段草稿');
-  assert.equal(failed.elements.textFeedback.textContent, '电脑未接收输入');
-  assert(failed.elements.textFeedback.classList.contains('error'));
-  assert(!failed.elements.textFeedback.classList.contains('visually-hidden'));
-  console.log('PASS: integrated minimal UI/silent success, modes/native focus, viewport resize, mouse/drag, independent scroll rail/fractions/cancel/cleanup, draft deletion/backspace, IME/Unicode send, pairing, failed-send preservation, authenticated serialized requests.');
+  const permissionError = '请在 Mac 系统设置 → 隐私与安全性 → 辅助功能中允许 WatchMouse';
+  const unavailable = createApp(null, {inputReady: false, inputError: permissionError}); await wait();
+  assert.equal(unavailable.stored.get('watchmouse_token'), 'testtoken123456789', 'pairing token remains saved while input permission is denied');
+  assert.equal(unavailable.elements.connectionButton.attributes['aria-label'], '未连接，打开连接设置');
+  assert(!unavailable.elements.connectionPanel.hidden);
+  assert.equal(unavailable.elements.connectionMessage.textContent, permissionError);
+  assert.equal(unavailable.elements.actionFeedback.textContent, permissionError);
+  unavailable.draft('授权后发送'); unavailable.elements.sendTextButton.click(); await wait();
+  assert.equal(unavailable.records.length, 0, 'permission-denied status blocks input requests');
+  assert.equal(unavailable.elements.textInput.value, '授权后发送');
+  unavailable.setStatus({inputReady: true, inputError: ''}); unavailable.elements.pairButton.click(); await wait();
+  assert.equal(unavailable.elements.connectionButton.attributes['aria-label'], '已连接，打开连接设置');
+  unavailable.elements.sendTextButton.click(); await wait();
+  assert.equal(unavailable.records.at(-1).text, '授权后发送');
+  assert.equal(unavailable.elements.textInput.value, '', 'retained draft can be sent after permission is granted');
+  const unspecifiedPermission = createApp(null, {inputReady: false}); await wait();
+  assert.equal(unspecifiedPermission.elements.connectionMessage.textContent, '电脑输入权限未开启');
+
+  for (const [backendError, expected] of [
+    [permissionError, permissionError],
+    ['Windows 未接受输入。请确认目标窗口没有以管理员身份运行。', 'Windows 未接受输入。请确认目标窗口没有以管理员身份运行。'],
+    ['', '电脑未接收输入'],
+    ['x'.repeat(201), '电脑未接收输入']
+  ]) {
+    const failed = createApp(); await wait();
+    failed.draft('保留这段草稿'); failed.failNext(409, backendError); failed.elements.sendTextButton.click(); await wait();
+    assert.equal(failed.elements.textInput.value, '保留这段草稿');
+    assert.equal(failed.elements.textFeedback.textContent, expected);
+    assert.equal(failed.elements.connectionMessage.textContent, expected);
+    assert.equal(failed.elements.actionFeedback.textContent, expected);
+    assert(failed.elements.textFeedback.classList.contains('error'));
+    assert(!failed.elements.textFeedback.classList.contains('visually-hidden'));
+    assert(!failed.elements.sendTextButton.disabled);
+  }
+  console.log('PASS: integrated minimal UI/silent success, modes/native focus, viewport resize, mouse/drag, independent scroll rail/fractions/cancel/cleanup, draft deletion/backspace, IME/Unicode send, pairing/input readiness, actionable permission errors/failed-send preservation, authenticated serialized requests.');
 })().catch(error => {console.error(error); process.exitCode = 1;});

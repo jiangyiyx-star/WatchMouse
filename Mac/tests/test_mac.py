@@ -76,6 +76,27 @@ class MacTests(unittest.TestCase):
             self.assertEqual(6,len(self.events))
         finally:
             server.shutdown(); server.server_close(); thread.join()
+    def test_status_reports_permission_before_phone_sends_input(self):
+        server=receiver.create_server(host='127.0.0.1',port=0,token='test',controller=self.controller)
+        thread=threading.Thread(target=server.serve_forever,kwargs={'poll_interval':0.01},daemon=True)
+        thread.start()
+        try:
+            conn=http.client.HTTPConnection('127.0.0.1',server.server_port)
+            with patch('ApplicationServices.AXIsProcessTrusted',return_value=False):
+                conn.request('GET','/api/status?token=test')
+                response=conn.getresponse()
+                data=json.loads(response.read())
+                self.assertFalse(data['inputReady'])
+                self.assertIn('辅助功能',data['inputError'])
+            conn.request('GET','/api/status?token=test')
+            data=json.loads(conn.getresponse().read())
+            self.assertTrue(data['inputReady'])
+            self.assertEqual('',data['inputError'])
+            conn.close()
+            self.assertEqual([],self.events)
+        finally:
+            server.shutdown(); server.server_close(); thread.join()
+
     def test_mac_settings_and_network(self):
         self.assertIn('Library/Application Support',str(receiver.settings_path()))
         output=b'en0: flags\n\tinet 192.168.1.20 netmask 0xffffff00\nutun0: flags\n\tinet 10.9.0.2 netmask 0xffffffff\n'

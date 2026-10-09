@@ -182,7 +182,10 @@ class Handler(BaseHTTPRequestHandler):
         token = query.get("token", [""])[0]
         if url.path == "/api/status":
             paired = self.authorized(token)
+            permission = getattr(self.server.controller, "input_error", None)
+            input_error = permission() if callable(permission) else ""
             self.reply(200, {"app": "WatchMouse", "version": VERSION, "paired": paired,
+                             "inputReady": not bool(input_error), "inputError": input_error if paired else "",
                              "port": self.server.server_port, "commandCount": self.server.command_count,
                              "lastClient": self.server.last_client if paired else "",
                              "lastCommandAt": self.server.last_command_at if paired else 0,

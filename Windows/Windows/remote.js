@@ -67,7 +67,7 @@
   }
   function errorMessage(error) {
     if (error.status === 401 || error.status === 403) return '配对码无效';
-    if (error.status === 409) return '电脑未接收输入';
+    if (error.status === 409) return error.message && error.message.length <= 200 && error.message !== '操作失败' ? error.message : '电脑未接收输入';
     if (error.status === 400) return '操作失败';
     if (error.name === 'AbortError') return '连接超时';
     return error.message && error.message.length <= 24 ? error.message : '操作失败';
@@ -106,6 +106,12 @@
         return;
       }
       storage.set('watchmouse_token', token);
+      if (result.inputReady === false) {
+        const message = result.inputError || '电脑输入权限未开启';
+        setConnection(false, message);
+        feedback(message, true);
+        return;
+      }
       setConnection(true);
       setConnectionPanel(false);
       feedback();

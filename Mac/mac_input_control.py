@@ -23,9 +23,13 @@ class InputController(BaseController):
         import ApplicationServices
         return bool(ApplicationServices.AXIsProcessTrusted())
 
+    def input_error(self):
+        return '' if self.trusted() else '请在 Mac 系统设置 → 隐私与安全性 → 辅助功能中允许 WatchMouse'
+
     def _check(self):
-        if not self.trusted():
-            raise OSError('请在 Mac 系统设置 → 隐私与安全性 → 辅助功能中允许 WatchMouse')
+        error = self.input_error()
+        if error:
+            raise OSError(error)
 
     def _post(self, event):
         if event is None:

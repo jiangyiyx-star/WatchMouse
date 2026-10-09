@@ -195,7 +195,9 @@ class DesktopLanguageTests(unittest.TestCase):
         gdi32.CreateCompatibleDC.return_value = 22
         gdi32.SelectObject.return_value = 44
         width, height = 8, 9
-        pixels = bytes(component for y in range(height) for x in range(width) for component in ((0, 0, 0, 0) if black_bottom and y >= 6 else (32, 17, 11 + x, 0)))
+        # Only the last two rows are black: the former whole-lower-third check
+        # would have accepted this partially painted image.
+        pixels = bytes(component for y in range(height) for x in range(width) for component in ((0, 0, 0, 0) if black_bottom and y >= 7 else (32, 17, 11 + x, 0)))
         buffer = ctypes.create_string_buffer(pixels)
 
         def rectangle(_window, pointer):

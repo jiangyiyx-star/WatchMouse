@@ -181,13 +181,15 @@ def capture_windows_client(window_id, expected_size):
         original = gdi32.SelectObject(memory_dc, bitmap)
         if not original or original == ctypes.c_void_p(-1).value:
             raise OSError("Cannot select the native demo capture bitmap.")
-        # PW_CLIENTONLY | PW_RENDERFULLCONTENT renders this window into our DIB;
-        # screen bounds and other windows do not enter the captured pixels.
+        # PW_CLIENTONLY | PW_RENDERFULLCONTENT captures only this native client.
+        # Tk requires its children to be on-screen to paint; CI sets a large
+        # display before launch so every control has been rendered normally.
         if not user32.PrintWindow(window, memory_dc, 1 | 2):
             raise OSError("PrintWindow did not render the native demo window.")
         gdi32.GdiFlush()
         image = Image.frombytes("RGB", size, ctypes.string_at(bits, width * height * 4), "raw", "BGRX", 0, 1)
-        if all(low == high for low, high in image.getextrema()) or image.crop((0, height * 2 // 3, width, height)).getbbox() is None:
+        black_bottom_row = any(image.crop((0, row, width, row + 1)).getbbox() is None for row in range(max(0, height - 8), height))
+        if all(low == high for low, high in image.getextrema()) or black_bottom_row:
             raise OSError("Native demo capture is blank or missing its lower section.")
         return image
     finally:
@@ -320,7 +322,7 @@ class WatchMouseApp:
                 self.root.iconbitmap(str(icon_path))
             except tk.TclError:
                 logging.info("Window icon unavailable", exc_info=True)
-        self.root.geometry("820x790")
+        self.root.geometry("820x790+0+0" if demo else "820x790")
         self.root.minsize(760, 790)
         self.root.configure(bg=BG)
         self.root.protocol("WM_DELETE_WINDOW", self.close)

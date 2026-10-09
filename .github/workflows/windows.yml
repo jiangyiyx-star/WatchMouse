@@ -1,9 +1,9 @@
 name: Windows build and tests
 on:
   push:
-    paths: ['Windows/Windows/**', 'LICENSE', 'THIRD_PARTY_LICENSES.txt', '.github/workflows/windows.yml']
+    paths: ['Windows/Windows/**', 'tools/set_ci_display.py', 'LICENSE', 'THIRD_PARTY_LICENSES.txt', '.github/workflows/windows.yml']
   pull_request:
-    paths: ['Windows/Windows/**', 'LICENSE', 'THIRD_PARTY_LICENSES.txt', '.github/workflows/windows.yml']
+    paths: ['Windows/Windows/**', 'tools/set_ci_display.py', 'LICENSE', 'THIRD_PARTY_LICENSES.txt', '.github/workflows/windows.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -38,6 +38,8 @@ jobs:
           $output = Join-Path $env:GITHUB_WORKSPACE 'Windows\Windows\dist'
           New-Item -ItemType Directory -Path $output -Force | Out-Null
           Copy-Item -LiteralPath (Join-Path $unicodeRoot 'Windows\Windows\dist\WatchMouse-2.4.exe') -Destination $output -Force
+      - name: Prepare full-size CI display for the native screenshot
+        run: python tools/set_ci_display.py
       - name: Launch packaged desktop demo
         shell: powershell
         run: |
@@ -46,6 +48,9 @@ jobs:
           $appPath = Join-Path $env:GITHUB_WORKSPACE 'Windows\Windows\dist\WatchMouse-2.4.exe'
           $demo = Start-Process -FilePath $appPath -ArgumentList @('--demo', '--language', 'en', '--screenshot', ('"' + $demoPath + '"')) -PassThru -Wait
           if ($demo.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $demoPath)) { throw 'Packaged desktop demo failed to launch or capture.' }
+      - name: Restore CI display
+        if: always()
+        run: python tools/set_ci_display.py --restore
       - uses: actions/upload-artifact@v4
         with:
           name: WatchMouse-Windows

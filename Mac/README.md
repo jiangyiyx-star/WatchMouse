@@ -39,6 +39,8 @@ bash Mac/build.sh
 
 Build output: `Mac/dist/WatchMouse.app` and `Mac/dist/WatchMouse-Mac-2.4-<architecture>.zip`. Set `WATCHMOUSE_PYTHON=/path/to/python3` if needed. Paths containing spaces and Chinese characters are supported. The spec includes the shared web resources and license notices.
 
+The published Apple silicon package is built in CI with Python 3.12; its bundled native components target macOS 11 or earlier. A custom build inherits the minimum macOS version of its Python runtime and dependencies. Using a newer locally built Python can raise that requirement.
+
 Source runs may require permission for Python or its launching terminal; release builds require permission for WatchMouse. Formal signing/notarization requires an Apple Developer identity and is not configured here.
 
 ## Tests and screenshots

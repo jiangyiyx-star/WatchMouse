@@ -10,6 +10,11 @@ The MIT license applies to WatchMouse's source. It does not replace licenses of 
 | [qrcode](https://github.com/lincolnloop/python-qrcode/blob/main/LICENSE) | QR code generation | BSD |
 | [Pillow](https://github.com/python-pillow/Pillow/blob/main/LICENSE) | Images and QR rendering | HPND and included notices |
 | [Tcl/Tk](https://www.tcl-lang.org/software/tcltk/license.html) | Windows desktop UI | Tcl/Tk license |
+| [OpenSSL 3](https://github.com/openssl/openssl/blob/openssl-3.0.16/LICENSE.txt) | Bundled Python runtime cryptography libraries | Apache 2.0 |
+| [libffi](https://github.com/libffi/libffi/blob/v3.4.4/LICENSE) | Windows Python foreign-function interface | MIT |
+| [mpdecimal](https://github.com/python/cpython-source-deps/blob/mpdecimal-4.0.0/COPYRIGHT.txt) | Python decimal arithmetic | BSD 2-Clause |
+| [Expat](https://github.com/libexpat/libexpat/blob/R_2_8_2/expat/COPYING) | Python XML parser | MIT |
+| [LibTomMath](https://github.com/libtom/libtommath/blob/master/LICENSE) | Tcl arithmetic library | Public domain / Unlicense |
 
 Development/CI uses Node.js for frontend tests and browser tools for screenshots. They are not part of the phone UI, which has no third-party JavaScript dependencies.
 

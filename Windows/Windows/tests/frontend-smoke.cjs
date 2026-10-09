@@ -73,7 +73,7 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
     window.SpeechRecognition = class {
       constructor() { window.recognition = this; }
       start() { this.onstart(); }
-      stop() { this.onend(); }
+      stop() { this.stopCalls = (this.stopCalls || 0) + 1; this.onend(); }
     };
   }
   const records = [], statusRequests = [], stored = options.stored || new Map(savedMode ? [['watchmouse_mode', savedMode]] : []);
@@ -349,9 +349,19 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
   assert.equal(historyUnavailable.elements.connectionButton.attributes['aria-label'], 'Connected; open connection settings', 'unavailable History API does not interrupt pairing');
   assert.equal(historyUnavailable.stored.get('watchmouse_token'), 'testtoken123456789');
   const speechApp = createApp(null, {}, {secureSpeech: true}); await wait();
-  assert.equal(speechApp.window.recognition.lang, 'en-US');
+  assert.equal(speechApp.window.recognition.lang, 'zh-CN', 'existing dictation locale is independent of the English interface');
+  speechApp.elements.speechButton.click();
+  assert.equal(speechApp.elements.speechButton.attributes['aria-label'], 'Stop dictation');
   speechApp.elements.languageSelect.value = 'zh'; speechApp.elements.languageSelect.emit('change');
-  assert.equal(speechApp.window.recognition.lang, 'zh-CN', 'secure browser dictation follows interface locale');
+  assert.equal(speechApp.window.recognition.lang, 'zh-CN', 'interface selection does not reconfigure dictation');
+  assert.equal(speechApp.window.recognition.stopCalls || 0, 0, 'interface selection does not stop active dictation');
+  assert.equal(speechApp.elements.speechButton.textContent, '■', 'active recording remains active');
+  assert.equal(speechApp.elements.speechButton.attributes['aria-label'], '停止语音', 'only dictation control labels change language');
+  speechApp.elements.languageSelect.value = 'en'; speechApp.elements.languageSelect.emit('change');
+  assert.equal(speechApp.window.recognition.stopCalls || 0, 0);
+  assert.equal(speechApp.elements.speechButton.attributes['aria-label'], 'Stop dictation');
+  speechApp.elements.speechButton.click();
+  assert.equal(speechApp.window.recognition.stopCalls, 1, 'the explicit stop control still ends dictation');
 
   const staleQueue = createApp(); await wait();
   staleQueue.failNext(409, '', 'input_unavailable');
@@ -415,5 +425,5 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
     coded.elements.languageSelect.value = 'zh'; coded.elements.languageSelect.emit('change');
     assert(/[\u4e00-\u9fff]/.test(coded.elements.connectionMessage.textContent), 'dynamic permission feedback switches language');
   }
-  console.log('PASS: integrated minimal UI/silent success, modes/native focus, viewport resize, mouse/drag, independent scroll rail/fractions/cancel/cleanup, draft deletion/backspace, IME/Unicode send, pairing/input readiness, actionable permission errors/failed-send preservation, authenticated serialized requests, saved EN/ZH interface and pairing, speech locale, non-overlapping status checks, permission/restart reconnect, hidden-page suspension, stale-input discard.');
+  console.log('PASS: integrated minimal UI/silent success, modes/native focus, viewport resize, mouse/drag, independent scroll rail/fractions/cancel/cleanup, draft deletion/backspace, IME/Unicode send, pairing/input readiness, actionable permission errors/failed-send preservation, authenticated serialized requests, saved EN/ZH interface and pairing, interface-only dictation labels, non-overlapping status checks, permission/restart reconnect, hidden-page suspension, stale-input discard.');
 })().catch(error => {console.error(error); process.exitCode = 1;});

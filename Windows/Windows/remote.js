@@ -124,14 +124,12 @@
     renderConnection(); updateDragUI(); updateDeleteLabel();
     feedback(actionMessageKey, actionError); textFeedback(textMessageKey, textError);
     if (speech) {
-      speech.lang = language === 'zh' ? 'zh-CN' : 'en-US';
       $('speechButton').setAttribute('aria-label', t(speechListening ? 'stopSpeech' : 'speech'));
     }
   }
   $('languageSelect').addEventListener('change', event => {
     language = event.target.value === 'zh' ? 'zh' : 'en';
     storage.set('watchmouse_language', language);
-    if (speechListening && speech) speech.stop();
     applyLanguage();
   });
   function discardInput(messageKey = 'notConnected', preserveRelease = false) {
@@ -555,7 +553,8 @@
   if (window.isSecureContext && Recognition) {
     $('speechButton').hidden = false;
     speech = new Recognition();
-    speech.lang = language === 'zh' ? 'zh-CN' : 'en-US';
+    // Interface language changes leave dictation locale and active sessions unchanged.
+    speech.lang = 'zh-CN';
     speech.continuous = false;
     speech.interimResults = true;
     let startingText = '';

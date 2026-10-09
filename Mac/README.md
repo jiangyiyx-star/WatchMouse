@@ -4,7 +4,7 @@
 
 ## 下载使用
 
-从 [v2.3 下载页](https://github.com/jiangyiyx-star/WatchMouse/releases/tag/v2.3) 下载 `WatchMouse-Mac-2.3-arm64.zip`。当前下载包面向 Apple 芯片 Mac，最低 macOS 11；Intel Mac 可在 Intel 机器上从源码构建，尚未验证 Intel 下载包。
+从 [Mac 下载页](https://github.com/jiangyiyx-star/WatchMouse/releases/tag/v2.3-mac.1) 下载 `WatchMouse-Mac-2.3-arm64.zip`。当前下载包面向 Apple 芯片 Mac，最低 macOS 11；Intel Mac 可在 Intel 机器上从源码构建，尚未验证 Intel 下载包。
 
 1. 解压，将 `WatchMouse.app` 拖到“应用程序”后打开。
 2. 这是自签名构建，尚未经过 Apple 公证。如果 macOS 阻止首次启动，可在系统设置 → 隐私与安全性中确认来源后选择“仍要打开”。

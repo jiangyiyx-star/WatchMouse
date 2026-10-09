@@ -13,7 +13,7 @@
 
 ## Mac 版本
 
-从 [v2.3 下载页](https://github.com/jiangyiyx-star/WatchMouse/releases/tag/v2.3) 下载 `WatchMouse-Mac-2.3-arm64.zip`（Apple 芯片 Mac）。解压并将 `WatchMouse.app` 移到应用程序，打开后在“系统设置 → 隐私与安全性 → 辅助功能”中授权，再用手机扫码。
+从 [Mac 下载页](https://github.com/jiangyiyx-star/WatchMouse/releases/tag/v2.3-mac.1) 下载 `WatchMouse-Mac-2.3-arm64.zip`（Apple 芯片 Mac）。解压并将 `WatchMouse.app` 移到应用程序，打开后在“系统设置 → 隐私与安全性 → 辅助功能”中授权，再用手机扫码。
 
 Mac 版提供原生窗口、二维码、服务启停、中文输入和 Command 组合键。使用、首次启动与构建说明见 [Mac 开发说明](Mac/README.md)。实体手机和手表操作仍需实测。
 

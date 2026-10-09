@@ -1,0 +1,10 @@
+* text=auto
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.jpg binary
+*.ico binary
+remote.html -text
+remote.css -text
+remote.js -text
+*.webmanifest -text
+icon.svg -text

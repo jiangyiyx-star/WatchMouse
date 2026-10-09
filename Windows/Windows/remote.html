@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#101719">
+  <meta name="color-scheme" content="dark">
+  <title>随手控</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" type="image/svg+xml" href="/icon.svg">
+  <link rel="stylesheet" href="/remote.css">
+  <script src="/remote.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <main class="workspace">
+      <section id="douyinPanel" class="douyin-panel" hidden aria-label="抖音遥控">
+        <button type="button" data-key="up" class="douyin-previous" aria-label="上一个视频">↑</button>
+        <button type="button" data-key="space" class="douyin-play" aria-label="播放或暂停">Ⅱ / ▶</button>
+        <button type="button" data-key="down" class="douyin-next" aria-label="下一个视频">↓</button>
+      </section>
+      <section id="mousePanel" class="mouse-controller" aria-label="鼠标控制">
+        <div id="touchpad" class="touchpad" aria-label="触控板：单指移动，轻点单击，双指滚动">
+          <span id="touchIndicator" class="touch-indicator" hidden aria-hidden="true"></span>
+        </div>
+        <div class="mouse-buttons"><button type="button" data-command="C" class="mouse-button" aria-label="鼠标左键">左键</button><button id="dragButton" type="button" class="mouse-button" aria-label="拖动，点击按住左键" aria-pressed="false">拖动</button><button type="button" data-command="RC" class="mouse-button" aria-label="鼠标右键">右键</button></div>
+        <div class="scroll-rail" aria-label="滚轮"><button type="button" data-command="S 3" aria-label="向上滚动">↑</button><div id="scrollSurface" class="scroll-surface" aria-label="单指上下滑动滚动页面"></div><button type="button" data-command="S -3" aria-label="向下滚动">↓</button></div>
+      </section>
+      <section id="keyboardPanel" class="keyboard-panel" hidden aria-label="手机输入">
+        <div class="draft-composer"><textarea id="textInput" rows="2" maxlength="4000" placeholder="输入…" aria-label="输入草稿" autocapitalize="off" spellcheck="false"></textarea><button id="speechButton" class="speech-button" type="button" hidden aria-label="浏览器语音输入">🎙</button><button id="sendTextButton" class="send-button" type="button" aria-label="发送草稿到电脑">↗</button></div>
+        <div id="textFeedback" class="visually-hidden" role="status" aria-live="polite"></div>
+        <div class="draft-actions" aria-label="常用操作"><button id="deleteTextButton" type="button" aria-label="电脑退格">⌫</button><button type="button" data-key="space" aria-label="电脑空格">␣</button><button type="button" data-key="enter" aria-label="电脑回车">↵</button><button id="openPhoneKeyboard" type="button" aria-label="打开手机键盘">⌨</button></div>
+      </section>
+    </main>
+    <footer class="bottom-bar">
+      <section id="connectionPanel" class="connection-panel" hidden aria-label="连接设置">
+        <div class="connection-meta"><span id="serverAddress"></span><a id="watchLink" href="/watch">手表 ↗</a></div>
+        <div class="pairing-row"><input id="pairingCode" type="password" placeholder="配对码" aria-label="配对码" autocomplete="off" autocapitalize="off" spellcheck="false"><button id="pairButton" class="accent-button" type="button">连接</button></div>
+        <label class="speed-setting"><span>速度</span><input id="sensitivity" type="range" min="0.5" max="3" step="0.1" value="1.4" aria-label="鼠标移动速度"></label>
+        <div id="connectionMessage" class="connection-message" role="status"></div>
+      </section>
+      <div id="actionFeedback" class="visually-hidden" role="status" aria-live="polite"></div>
+      <div class="footer-controls"><nav class="mode-switcher" aria-label="遥控模式"><button id="douyinModeButton" type="button" data-mode="douyin" aria-pressed="false">抖音</button><button id="mouseModeButton" type="button" data-mode="mouse" aria-pressed="true">鼠标</button><button id="keyboardModeButton" type="button" data-mode="keyboard" aria-pressed="false">键鼠</button></nav><button id="connectionButton" class="status-button" type="button" aria-label="正在连接，打开连接设置" aria-controls="connectionPanel" aria-expanded="false"><span id="statusDot" class="status-dot" aria-hidden="true"></span></button></div>
+    </footer>
+  </div>
+</body>
+</html>

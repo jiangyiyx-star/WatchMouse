@@ -1,0 +1,31 @@
+# Build outputs and local environments
+*.exe
+*.spec
+**/build/
+**/dist/
+**/.build-venv/
+**/.venv/
+**/venv/
+**/__pycache__/
+*.py[cod]
+
+# Runtime settings, logs and credentials
+*.log
+.env
+.env.*
+**/config.json
+*.pem
+*.key
+*.pfx
+*.p12
+
+# Extracted archive metadata and obsolete backups
+**/__MACOSX/
+.DS_Store
+Thumbs.db
+**/backup-v1/
+
+# Keep only the current UI examples
+Windows/Windows/screenshots/*
+!Windows/Windows/screenshots/v23-mouse.jpg
+!Windows/Windows/screenshots/v23-keyboard.jpg

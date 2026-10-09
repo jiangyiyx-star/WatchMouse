@@ -29,3 +29,5 @@ Thumbs.db
 Windows/Windows/screenshots/*
 !Windows/Windows/screenshots/v23-mouse.jpg
 !Windows/Windows/screenshots/v23-keyboard.jpg
+
+!Mac/WatchMouse.spec

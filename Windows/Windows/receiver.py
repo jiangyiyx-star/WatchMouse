@@ -26,6 +26,8 @@ def resource_path(name):
     return Path(getattr(sys, "_MEIPASS", Path(__file__).parent)) / name
 
 def settings_path():
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "WatchMouse" / "config.json"
     return Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "WatchMouse" / "config.json"
 
 def save_settings(settings):
@@ -34,6 +36,8 @@ def save_settings(settings):
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(path)
+    if sys.platform == "darwin":
+        path.chmod(0o600)
 
 def load_settings():
     try:
@@ -69,6 +73,21 @@ def lan_addresses():
                     continue
                 priority = 0 if any(item in alias for item in ("wlan", "wi-fi", "wifi", "无线")) else 1
                 candidates.append((priority, address))
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+    if sys.platform == "darwin":
+        try:
+            raw = subprocess.check_output(["/sbin/ifconfig"], timeout=5).decode("utf-8")
+            interface = ""
+            for line in raw.splitlines():
+                if line and not line[0].isspace():
+                    interface = line.split(":", 1)[0]
+                parts = line.split()
+                if interface.startswith("en") and len(parts) > 1 and parts[0] == "inet":
+                    address = parts[1]
+                    ip = ipaddress.ip_address(address)
+                    if ip.is_private and not address.startswith(("127.", "169.254.")):
+                        candidates.append((0, address))
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
     if not candidates:

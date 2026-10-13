@@ -268,7 +268,8 @@ class ReceiverProtocolTests(unittest.TestCase):
                 self.assertEqual(1, accepted.call_count)
             with self.server._connection_lock:
                 peer = next(iter(self.server._connections))
-                self.assertEqual(1, peer.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY))
+                # BSD/macOS may return an enabled flag bitmask rather than literal 1.
+                self.assertNotEqual(0, peer.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY))
         finally:
             connection.close()
 

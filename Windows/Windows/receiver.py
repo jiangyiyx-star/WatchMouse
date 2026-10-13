@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
 from input_control import InputController
 
-PORT, VERSION = 53514, "2.3"
+PORT, VERSION = 53514, "2.6"
 ASSETS = {"/": ("remote.html", "text/html"), "/remote.html": ("remote.html", "text/html"),
           "/remote.js": ("remote.js", "text/javascript"), "/remote.css": ("remote.css", "text/css"),
           "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
@@ -26,6 +26,8 @@ def resource_path(name):
     return Path(getattr(sys, "_MEIPASS", Path(__file__).parent)) / name
 
 def settings_path():
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "WatchMouse" / "config.json"
     return Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "WatchMouse" / "config.json"
 
 def save_settings(settings):
@@ -34,6 +36,8 @@ def save_settings(settings):
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(path)
+    if sys.platform == "darwin":
+        path.chmod(0o600)
 
 def load_settings():
     try:
@@ -51,12 +55,12 @@ def lan_addresses():
     """Prefer real private LAN adapters; ignore VPN and Hyper-V networks."""
     candidates = []
     if sys.platform == "win32":
-        script = ("Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -ne '127.0.0.1' "
+        script = ("[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding; Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -ne '127.0.0.1' "
                   "-and $_.IPAddress -notlike '169.254.*' } | Select-Object InterfaceAlias,IPAddress "
                   "| ConvertTo-Json -Compress")
         try:
             raw = subprocess.check_output(["powershell.exe", "-NoProfile", "-Command", script],
-                                          timeout=8, creationflags=subprocess.CREATE_NO_WINDOW)
+                                          timeout=8, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             entries = json.loads(raw.decode("utf-8", errors="replace"))
             if isinstance(entries, dict):
                 entries = [entries]
@@ -69,6 +73,21 @@ def lan_addresses():
                     continue
                 priority = 0 if any(item in alias for item in ("wlan", "wi-fi", "wifi", "无线")) else 1
                 candidates.append((priority, address))
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+    if sys.platform == "darwin":
+        try:
+            raw = subprocess.check_output(["/sbin/ifconfig"], timeout=5).decode("utf-8")
+            interface = ""
+            for line in raw.splitlines():
+                if line and not line[0].isspace():
+                    interface = line.split(":", 1)[0]
+                parts = line.split()
+                if interface.startswith("en") and len(parts) > 1 and parts[0] == "inet":
+                    address = parts[1]
+                    ip = ipaddress.ip_address(address)
+                    if ip.is_private and not address.startswith(("127.", "169.254.")):
+                        candidates.append((0, address))
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
     if not candidates:
@@ -84,8 +103,23 @@ def lan_addresses():
 def local_ip():
     return next(iter(lan_addresses()), "127.0.0.1")
 
+
+def error_code(error):
+    """Stable API codes let either client language describe native failures."""
+    if isinstance(error, OSError):
+        if "辅助功能" in str(error):
+            return "accessibility_permission"
+        if "Windows 未接受输入" in str(error):
+            return "windows_elevation"
+        return "input_unavailable"
+    return "invalid_request"
+
 class ReceiverServer(ThreadingHTTPServer):
     daemon_threads = True
+    request_queue_size = 64
+    max_connections = 64
+    connection_timeout = 5
+
     def __init__(self, address, token, controller):
         self.token, self.controller = token, controller
         self.started_at, self.last_command_at = time.time(), 0.0
@@ -93,7 +127,55 @@ class ReceiverServer(ThreadingHTTPServer):
         self.command_lock = threading.Lock()
         self.watch_actions = {}
         self.watch_lock = threading.Lock()
+        self._connections = set()
+        self._connection_lock = threading.Lock()
+        self._closing = threading.Event()
         super().__init__(address, Handler)
+
+    def process_request(self, request, client_address):
+        # An idle keep-alive connection owns one handler thread. Bound their
+        # number without creating a waiting thread for every rejected socket.
+        with self._connection_lock:
+            accepted = not self._closing.is_set() and len(self._connections) < self.max_connections
+            if accepted:
+                self._connections.add(request)
+        if not accepted:
+            return self.shutdown_request(request)
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            with self._connection_lock:
+                self._connections.discard(request)
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            with self._connection_lock:
+                self._connections.discard(request)
+
+    def handle_error(self, request, client_address):
+        error = sys.exc_info()[1]
+        if isinstance(error, (ConnectionError, TimeoutError)) or (self._closing.is_set() and isinstance(error, OSError)):
+            return
+        super().handle_error(request, client_address)
+
+    def _stop_connections(self):
+        self._closing.set()
+        with self._connection_lock:
+            connections = tuple(self._connections)
+        for connection in connections:
+            try:
+                # close() alone does not interrupt a buffered rfile read.
+                connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            connection.close()
+
+    def shutdown(self):
+        self._stop_connections()
+        super().shutdown()
 
     def register_watch_action(self, command):
         with self.watch_lock:
@@ -112,19 +194,42 @@ class ReceiverServer(ThreadingHTTPServer):
 
     def execute(self, payload, client):
         with self.command_lock:
+            if self._closing.is_set():
+                raise OSError("服务正在停止")
             result = self.controller.execute(payload)
             self.last_command_at, self.last_client = time.time(), client
             self.command_count += 1
             return result
 
     def server_close(self):
+        self._stop_connections()
         try:
-            self.controller.release_all()
+            # Finish any input already underway before releasing held buttons;
+            # commands waiting for this lock see _closing and cannot run later.
+            with self.command_lock:
+                self.controller.release_all()
         finally:
             super().server_close()
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "WatchMouse/2.3"
+    server_version = "WatchMouse/" + VERSION
+    protocol_version = "HTTP/1.1"
+    disable_nagle_algorithm = True
+    # Buffer headers and the small command response into one socket write.
+    # handle_one_request() flushes at the end of each response, not connection.
+    wbufsize = 65536
+
+    def setup(self):
+        self.timeout = self.server.connection_timeout
+        super().setup()
+
+    def handle(self):
+        try:
+            super().handle()
+        except (ConnectionError, OSError):
+            # Disconnects and shutdown can interrupt header/body reads or writes.
+            self.close_connection = True
+
     def log_message(self, *_):
         pass
 
@@ -133,9 +238,15 @@ class Handler(BaseHTTPRequestHandler):
             body = json.dumps(body, ensure_ascii=False)
         data = body.encode("utf-8") if isinstance(body, str) else body
         self.send_response(status)
-        for key, value in {"Content-Type": content_type + "; charset=utf-8", "Content-Length": str(len(data)),
+        response_headers = {"Content-Type": content_type + "; charset=utf-8",
                            "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff",
-                           "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'", **(headers or {})}.items():
+                           "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'"}
+        if status != 204:
+            response_headers["Content-Length"] = str(len(data))
+        if self.close_connection:
+            response_headers["Connection"] = "close"
+        response_headers.update(headers or {})
+        for key, value in response_headers.items():
             self.send_header(key, value)
         self.end_headers()
         try:
@@ -147,23 +258,76 @@ class Handler(BaseHTTPRequestHandler):
         token = self.headers.get("X-WatchMouse-Token", "") or token
         return isinstance(token, str) and secrets.compare_digest(token.encode("utf-8", errors="replace"), self.server.token.encode("utf-8"))
 
-    def read_body(self):
-        length = int(self.headers.get("Content-Length", "0"))
-        if length <= 0 or length > 32768:
+    def body_length(self, required=True):
+        # Chunked bodies are unsupported. Ambiguous framing must never leave
+        # bytes that a keep-alive handler could interpret as another command.
+        lengths = self.headers.get_all("Content-Length", [])
+        if self.headers.get_all("Transfer-Encoding") or len(lengths) > 1:
+            self.close_connection = True
+            raise ValueError("请求长度不明确")
+        value = lengths[0].strip(" \t") if lengths else "0"
+        if len(value) > 5 or not value.isascii() or not value.isdecimal():
+            self.close_connection = True
             raise ValueError("请求大小无效（上限 32 KB）")
-        return self.rfile.read(length).decode("utf-8")
+        length = int(value)
+        if length > 32768 or (required and length <= 0):
+            self.close_connection = True
+            raise ValueError("请求大小无效（上限 32 KB）")
+        return length
+
+    def read_body(self):
+        length = self.body_length()
+        try:
+            data = self.rfile.read(length)
+        except TimeoutError:
+            self.close_connection = True
+            raise ValueError("请求正文读取超时") from None
+        if len(data) != length:
+            self.close_connection = True
+            raise ValueError("请求正文不完整")
+        return data.decode("utf-8")
+
+    def handle_expect_100(self):
+        try:
+            if self.command != "POST" or urlparse(self.path).path not in ("/api/command", "/watch"):
+                self.close_connection = True
+                self.reply(404, {"ok": False, "error": "接口不存在"})
+                return False
+            if not self.same_origin():
+                self.close_connection = True
+                self.reply(403, {"ok": False, "error": "请从电脑提供的遥控页面操作"})
+                return False
+            self.body_length()
+        except ValueError as error:
+            self.reply(400, {"ok": False, "error": str(error)})
+            return False
+        super().handle_expect_100()
+        # A client waits for this interim response before transmitting its body.
+        self.wfile.flush()
+        return True
 
     def same_origin(self):
         origin = self.headers.get("Origin")
         return not origin or origin == "http://" + self.headers.get("Host", "")
 
     def do_GET(self):
+        try:
+            if self.body_length(required=False):
+                self.close_connection = True
+                raise ValueError("GET 请求不能包含正文")
+        except ValueError as error:
+            return self.reply(400, {"ok": False, "error": str(error)})
         url = urlparse(self.path)
         query = parse_qs(url.query)
         token = query.get("token", [""])[0]
+        language = "zh-CN" if query.get("lang", ["en"])[0] == "zh-CN" else "en"
         if url.path == "/api/status":
             paired = self.authorized(token)
+            permission = getattr(self.server.controller, "input_error", None)
+            input_error = permission() if callable(permission) else ""
             self.reply(200, {"app": "WatchMouse", "version": VERSION, "paired": paired,
+                             "inputReady": not bool(input_error), "inputError": input_error if paired else "",
+                             "inputErrorCode": ("accessibility_permission" if sys.platform == "darwin" else "input_unavailable") if input_error and paired else "",
                              "port": self.server.server_port, "commandCount": self.server.command_count,
                              "lastClient": self.server.last_client if paired else "",
                              "lastCommandAt": self.server.last_command_at if paired else 0,
@@ -179,7 +343,7 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path in ("/watch", "/watch.html"):
             if "action" in query:
                 if not self.authorized(token):
-                    return self.reply(401, self.watch_page("", "配对码无效"), "text/html")
+                    return self.reply(401, self.watch_page("", "配对码无效", language), "text/html")
                 command = self.server.consume_watch_action(query["action"][0])
                 message = "操作已处理或链接已过期，请重新点击按钮"
                 if command:
@@ -188,8 +352,8 @@ class Handler(BaseHTTPRequestHandler):
                         message = "连接正常" if result == "PONG" else "已执行"
                     except (ValueError, OSError, TypeError, OverflowError) as error:
                         message = str(error)
-                return self.reply(303, "", "text/plain", {"Location": "/watch?" + urlencode({"token": token, "message": message})})
-            self.reply(200, self.watch_page(token, query.get("message", [""])[0][:200]), "text/html")
+                return self.reply(303, "", "text/plain", {"Location": "/watch?" + urlencode({"token": token, "message": message, "lang": language})})
+            self.reply(200, self.watch_page(token, query.get("message", [""])[0][:200], language), "text/html")
         elif url.path in ASSETS:
             filename, content_type = ASSETS[url.path]
             try:
@@ -206,23 +370,26 @@ class Handler(BaseHTTPRequestHandler):
             result = self.server.execute(payload, self.client_address[0])
             self.reply(200, result if plain else {"ok": True, "result": result}, "text/plain" if plain else "application/json")
         except (ValueError, TypeError, OverflowError) as error:
-            self.reply(400, str(error) if plain else {"ok": False, "error": str(error)}, "text/plain" if plain else "application/json")
+            self.reply(400, str(error) if plain else {"ok": False, "error": str(error), "errorCode": error_code(error)}, "text/plain" if plain else "application/json")
         except OSError as error:
-            self.reply(409, str(error) if plain else {"ok": False, "error": str(error)}, "text/plain" if plain else "application/json")
+            self.reply(409, str(error) if plain else {"ok": False, "error": str(error), "errorCode": error_code(error)}, "text/plain" if plain else "application/json")
 
     def do_POST(self):
         path = urlparse(self.path).path
         if path not in ("/api/command", "/watch"):
+            self.close_connection = True
             return self.reply(404, {"ok": False, "error": "接口不存在"})
         if not self.same_origin():
+            self.close_connection = True
             return self.reply(403, {"ok": False, "error": "请从电脑提供的遥控页面操作"})
         try:
             body = self.read_body()
             if path == "/watch":
                 form = parse_qs(body, keep_blank_values=True)
                 token = form.get("token", [""])[0]
+                language = "zh-CN" if form.get("lang", ["en"])[0] == "zh-CN" else "en"
                 if not self.authorized(token):
-                    return self.reply(401, self.watch_page("", "配对码无效，请重新打开电脑提供的链接"), "text/html")
+                    return self.reply(401, self.watch_page("", "配对码无效，请重新打开电脑提供的链接", language), "text/html")
                 payload = {"command": form.get("command", ["PING"])[0]}
                 if "text" in form:
                     payload = {"text": form["text"][0]}
@@ -231,44 +398,67 @@ class Handler(BaseHTTPRequestHandler):
                     message = "连接正常" if result == "PONG" else "已执行"
                 except (ValueError, OSError, TypeError, OverflowError) as error:
                     message = str(error)
-                return self.reply(303, "", "text/plain", {"Location": "/watch?" + urlencode({"token": token, "message": message})})
+                return self.reply(303, "", "text/plain", {"Location": "/watch?" + urlencode({"token": token, "message": message, "lang": language})})
             if not self.headers.get("Content-Type", "").startswith("application/json"):
                 return self.reply(415, {"ok": False, "error": "请发送 JSON"})
             payload = json.loads(body)
             if not isinstance(payload, dict):
                 raise ValueError("请求必须是 JSON 对象")
             if not self.authorized(payload.get("token", "")):
-                return self.reply(401, {"ok": False, "error": "配对码无效，请扫描电脑上的二维码"})
+                return self.reply(401, {"ok": False, "error": "配对码无效，请扫描电脑上的二维码", "errorCode": "invalid_token"})
             self.perform(payload)
         except (ValueError, UnicodeError) as error:
             self.reply(400, {"ok": False, "error": str(error)})
 
-    def watch_page(self, token, message=""):
+    def watch_page(self, token, message="", language="en"):
         escape = html.escape
+        language = "zh-CN" if language == "zh-CN" else "en"
+        words = {
+            "手表简洁遥控": "Watch remote", "配对码无效": "Invalid pairing key",
+            "配对码无效，请重新打开电脑提供的链接": "Invalid pairing key. Reopen the desktop link.",
+            "电脑 App 配对码": "Desktop pairing key", "连接电脑": "Connect",
+            "与电脑连接同一 Wi-Fi": "Use the same Wi-Fi as your computer.",
+            "上一个 ↑": "Previous ↑", "下一个 ↓": "Next ↓", "播放 / 暂停": "Play / Pause",
+            "测试连接": "Test connection", "左键": "Left click", "右键": "Right click",
+            "滚轮 ↑": "Scroll ↑", "滚轮 ↓": "Scroll ↓", "光标 ←": "Pointer ←",
+            "光标 →": "Pointer →", "光标 ↑": "Pointer ↑", "光标 ↓": "Pointer ↓",
+            "回车": "Enter", "退格": "Backspace", "要输入到电脑的文字": "Text to send",
+            "发送文字": "Send text", "每点一次执行一次。请先在电脑选中输入框。": "One action per tap. Focus an input on your computer first.",
+            "手机触控板版": "Phone trackpad", "连接正常": "Connected", "已执行": "Done",
+            "操作已处理或链接已过期，请重新点击按钮": "Already handled or expired. Tap a fresh button.",
+            "Windows 未接受输入。请确认目标窗口没有以管理员身份运行。": "Windows rejected input. Use a target app that is not running as administrator.",
+            "请输入 1–4000 字的文字": "Enter 1–4000 characters of text.",
+            "文字包含无效字符": "The text contains an invalid character.",
+            "请在 Mac 系统设置 → 隐私与安全性 → 辅助功能中允许 WatchMouse": "Allow WatchMouse in Mac System Settings → Privacy & Security → Accessibility.",
+        }
+        def t(value):
+            return value if language == "zh-CN" else words.get(value, value)
         css = ("*{box-sizing:border-box}body{margin:0;padding:10px;background:#0b1220;color:#edf3ff;font:15px -apple-system,Arial,sans-serif}"
                "h1{font-size:19px;margin:4px 0 8px}p{font-size:12px;color:#9daec9;margin:8px 0}form{margin:0}"
                ".grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}button,input,textarea{font:inherit;border-radius:10px;"
                "border:1px solid #33435d;padding:12px 5px;background:#17263e;color:white;min-width:0;width:100%}"
                "button{min-height:44px}.control{display:flex;align-items:center;justify-content:center;min-height:44px;text-align:center;text-decoration:none;color:white;background:#17263e;border:1px solid #33435d;border-radius:10px;padding:10px 5px}"
                "textarea{margin-top:8px}a{color:#8ec5ff}@media(max-width:160px){.grid{grid-template-columns:1fr}body{padding:5px}}")
-        head = ("<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='disabled-adaptations' content='watch'>"
-                "<meta name='viewport' content='width=device-width,initial-scale=1'><title>WatchMouse · 手表</title><style>" + css +
-                "</style></head><body><h1>WatchMouse</h1><p>" + escape(message or "手表简洁遥控") + "</p>")
+        head = ("<!doctype html><html lang='" + language + "'><head><meta charset='utf-8'><meta name='disabled-adaptations' content='watch'>"
+                "<meta name='viewport' content='width=device-width,initial-scale=1'><title>WatchMouse · Watch</title><style>" + css +
+                "</style></head><body><h1>WatchMouse</h1><p>" + escape(t(message or "手表简洁遥控")) + "</p>")
+        head += "<p>" + " · ".join("<a href='" + escape("/watch?" + urlencode({"token":token,"lang":code}),quote=True) + "'>" + label + "</a>" for code,label in (("en","English"),("zh-CN","中文"))) + "</p>"
+        hidden = "<input type='hidden' name='lang' value='" + language + "'>"
         if not self.authorized(token):
-            return head + ("<form method='get' action='/watch'><label>电脑 App 配对码<input name='token' autocomplete='off' required>"
-                           "</label><button>连接电脑</button></form><p>与电脑连接同一 Wi-Fi</p></body></html>")
+            return head + ("<form method='get' action='/watch'>" + hidden + "<label>" + t("电脑 App 配对码") + "<input name='token' autocomplete='off' required>"
+                           "</label><button>" + t("连接电脑") + "</button></form><p>" + t("与电脑连接同一 Wi-Fi") + "</p></body></html>")
         buttons = [("K up", "上一个 ↑"), ("K down", "下一个 ↓"), ("K space", "播放 / 暂停"), ("PING", "测试连接"),
                    ("C", "左键"), ("RC", "右键"), ("S 2", "滚轮 ↑"), ("S -2", "滚轮 ↓"),
                    ("M -40,0", "光标 ←"), ("M 40,0", "光标 →"), ("M 0,-40", "光标 ↑"), ("M 0,40", "光标 ↓"),
                    ("K enter", "回车"), ("K backspace", "退格")]
-        hidden = "<input type='hidden' name='token' value='" + escape(token, quote=True) + "'>"
+        hidden += "<input type='hidden' name='token' value='" + escape(token, quote=True) + "'>"
         controls = "<div class='grid'>"
         for command, label in buttons:
-            action_url = "/watch?" + urlencode({"token": token, "action": self.server.register_watch_action(command)})
-            controls += "<a class='control' href='" + escape(action_url, quote=True) + "'>" + escape(label) + "</a>"
+            action_url = "/watch?" + urlencode({"token": token, "action": self.server.register_watch_action(command), "lang": language})
+            controls += "<a class='control' href='" + escape(action_url, quote=True) + "'>" + escape(t(label)) + "</a>"
         controls += "</div><form method='post' action='/watch'>" + hidden
-        controls += "<textarea name='text' rows='2' maxlength='4000' placeholder='要输入到电脑的文字'></textarea><button>发送文字</button></form>"
-        controls += "<p>每点一次执行一次。请先在电脑选中输入框。</p><p><a href='/?" + escape(urlencode({"token": token}), quote=True) + "'>手机触控板版</a></p></body></html>"
+        controls += "<textarea name='text' rows='2' maxlength='4000' placeholder='" + t("要输入到电脑的文字") + "'></textarea><button>" + t("发送文字") + "</button></form>"
+        controls += "<p>" + t("每点一次执行一次。请先在电脑选中输入框。") + "</p><p><a href='/?" + escape(urlencode({"token": token}), quote=True) + "'>" + t("手机触控板版") + "</a></p></body></html>"
         return head + controls
 
 def create_server(host="0.0.0.0", port=PORT, token=None, controller=None):

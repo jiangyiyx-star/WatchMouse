@@ -1,0 +1,5 @@
+pyobjc-framework-Cocoa>=11,<13
+pyobjc-framework-Quartz>=11,<13
+qrcode[pil]>=7.4,<9
+pyinstaller>=6.11,<7
+pyobjc-framework-ApplicationServices>=11,<13

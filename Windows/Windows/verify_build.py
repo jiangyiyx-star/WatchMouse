@@ -9,6 +9,8 @@ import types
 from PyInstaller.archive.readers import CArchiveReader
 
 ROOT = Path(__file__).resolve().parent
+REPOSITORY_ROOT = ROOT.parents[1]
+LICENSE_NOTICES = ("LICENSE", "THIRD_PARTY_LICENSES.txt")
 ASSET_PATTERNS = (
     "remote.html", "remote.js", "remote.css", "app.ico", "manifest*.json",
     "*.webmanifest", "icon*.svg", "icon*.png", "sw.js", "service-worker.js",
@@ -45,6 +47,11 @@ def verify(executable: Path):
         current = compile(source, bundled.co_filename, "exec", dont_inherit=True)
         compare_code(bundled, current, name)
     assets = {path for pattern in ASSET_PATTERNS for path in ROOT.glob(pattern) if path.is_file()}
+    for notice in LICENSE_NOTICES:
+        path = REPOSITORY_ROOT / notice
+        if not path.is_file():
+            raise RuntimeError(f"Missing source license notice: {notice}")
+        assets.add(path)
     for path in sorted(assets):
         if path.name not in archive.toc:
             raise RuntimeError(f"Missing bundled asset: {path.name}")
@@ -55,7 +62,8 @@ def verify(executable: Path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--exe", type=Path, default=ROOT / "dist" / "WatchMouse.exe")
+    import receiver
+    parser.add_argument("--exe", type=Path, default=ROOT / "dist" / f"WatchMouse-{receiver.VERSION}.exe")
     args = parser.parse_args()
     verify(args.exe)
 

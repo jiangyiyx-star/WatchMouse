@@ -6,11 +6,31 @@ const path = require('path');
 const html = fs.readFileSync(path.join(__dirname, '..', 'remote.html'), 'utf8');
 const source = fs.readFileSync(path.join(__dirname, '..', 'remote.js'), 'utf8');
 const wait = () => new Promise(resolve => setTimeout(resolve, 30));
+async function settle(app, timeout = 5000) {
+  const end = Date.now() + timeout;
+  let stable = 0, count = -1;
+  while (Date.now() < end) {
+    await wait();
+    if (!app.active() && app.records.length === count) stable++; else stable = 0;
+    count = app.records.length;
+    if (stable >= 2) return;
+  }
+  throw new Error('mock command queue did not settle');
+}
+function movementTotal(app) {
+  return app.records.filter(packet => packet.command?.startsWith('M ')).reduce((total, packet) => {
+    const [x, y] = packet.command.slice(2).split(',').map(Number);
+    return [total[0] + x, total[1] + y];
+  }, [0, 0]);
+}
 
-function createApp(savedMode = null) {
+function createApp(savedMode = null, inputStatus = {}, options = {}) {
   let document;
+  let scrollCalls = 0;
+  let rectReads = 0;
   class Element {
     constructor() {
+      this.tagName = ''; this.parentElement = null; this.children = []; this.childNodes = [];
       this.listeners = {}; this.style = {setProperty(name, value) {this[name] = value;}}; this.dataset = {}; this.attributes = {};
       this.captured = new Set();
       this.hidden = false; this.value = ''; this.textContent = ''; this.disabled = false;
@@ -18,7 +38,9 @@ function createApp(savedMode = null) {
       const classes = new Set();
       this.classList = {
         toggle(name, force = !classes.has(name)) {if (force) classes.add(name); else classes.delete(name);},
-        add(name) {classes.add(name);}, remove(name) {classes.delete(name);}, contains(name) {return classes.has(name);}
+        add(name) {classes.add(name);}, remove(name) {classes.delete(name);}, contains(name) {return classes.has(name);},
+        set(value) {classes.clear(); for (const name of value.split(/\s+/).filter(Boolean)) classes.add(name);},
+        toString() {return [...classes].join(' ');}
       };
     }
     addEventListener(name, listener) {(this.listeners[name] ||= []).push(listener);}
@@ -28,71 +50,219 @@ function createApp(savedMode = null) {
       return delivered;
     }
     dispatchEvent(event) {this.emit(event.type, event); return true;}
-    setAttribute(key, value) {this.attributes[key] = value;}
-    getBoundingClientRect() {return {left: 0, top: 0};}
+    get textContent() {return this.childNodes.map(node => typeof node === 'string' ? node : node.textContent).join('');}
+    set textContent(value) {this.children = []; this.childNodes = [String(value)];}
+    get className() {return this.classList.toString();}
+    set className(value) {this.classList.set(value);}
+    setAttribute(key, value) {
+      this.attributes[key] = String(value);
+      if (key === 'class') this.className = value;
+      if (key.startsWith('data-')) this.dataset[key.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = String(value);
+    }
+    getAttribute(key) {return this.attributes[key] ?? null;}
+    querySelectorAll(selector) {return selectAll(selector, this);}
+    querySelector(selector) {return this.querySelectorAll(selector)[0] || null;}
+    getBoundingClientRect() {rectReads++; return {left: 0, top: 0};}
     setPointerCapture(id) {this.captured.add(id);}
     hasPointerCapture(id) {return this.captured.has(id);}
     releasePointerCapture(id) {this.captured.delete(id); this.emit('lostpointercapture', {pointerId: id});}
     focus() {document.activeElement = this;}
     blur() {if (document.activeElement === this) document.activeElement = null;}
-    scrollIntoView() {}
-    click() {this.emit('click');}
+    scrollIntoView() {scrollCalls++;}
+    click() {if (!this.disabled) this.emit('click');}
     setSelectionRange(start, end = start) {this.selectionStart = start; this.selectionEnd = end;}
     setRangeText(text, start, end) {
       this.value = this.value.slice(0, start) + text + this.value.slice(end);
       this.setSelectionRange(start + text.length);
     }
   }
+  // Parse enough HTML structure to preserve actual ancestry and one identity
+  // per button, including buttons containing SVG rather than text glyphs.
   const elements = {};
-  for (const match of html.matchAll(/<[^>]*\bid="([^"]+)"[^>]*>/g)) {
-    elements[match[1]] = new Element();
-    elements[match[1]].hidden = /\bhidden\b/.test(match[0]);
-    for (const attribute of match[0].matchAll(/(aria-[\w-]+)="([^"]*)"/g)) elements[match[1]].setAttribute(attribute[1], attribute[2]);
-    for (const className of (/class="([^"]*)"/.exec(match[0])?.[1] || '').split(' ')) elements[match[1]].classList.add(className);
-    elements[match[1]].textContent = /^[^<]*/.exec(html.slice(match.index + match[0].length))[0];
+  const allElements = [];
+  document = new Element(); document.tagName = '#document';
+  const stack = [document];
+  const voidTags = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
+  const decode = text => text.replace(/&(?:amp|lt|gt|quot|apos|nbsp);|&#(?:x[0-9a-f]+|\d+);/gi, entity => {
+    if (entity.startsWith('&#')) return String.fromCodePoint(entity[2].toLowerCase() === 'x' ? parseInt(entity.slice(3), 16) : parseInt(entity.slice(2), 10));
+    return {amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0'}[entity.slice(1, -1).toLowerCase()];
+  });
+  let position = 0;
+  const tags = /<!--[\s\S]*?-->|<![^>]*>|<\/?([A-Za-z][\w:-]*)\b([^>]*)>/g;
+  for (const match of html.matchAll(tags)) {
+    stack.at(-1).childNodes.push(decode(html.slice(position, match.index)));
+    position = match.index + match[0].length;
+    if (!match[1]) continue;
+    const tagName = match[1].toLowerCase();
+    if (match[0].startsWith('</')) {
+      const index = stack.findLastIndex(node => node.tagName === tagName);
+      if (index > 0) stack.length = index;
+      continue;
+    }
+    const element = new Element(); element.tagName = tagName;
+    const attributes = /([^\s=/'">]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+    for (const attribute of match[2].replace(/\/$/, '').matchAll(attributes)) element.setAttribute(attribute[1].toLowerCase(), decode(attribute[2] ?? attribute[3] ?? attribute[4] ?? ''));
+    element.hidden = Object.hasOwn(element.attributes, 'hidden');
+    element.parentElement = stack.at(-1);
+    element.parentElement.children.push(element); element.parentElement.childNodes.push(element);
+    allElements.push(element);
+    if (element.attributes.id) elements[element.attributes.id] = element;
+    if (!voidTags.has(tagName) && !match[0].endsWith('/>')) stack.push(element);
   }
-  function buttons(attribute) {
-    const pattern = new RegExp('<button[^>]*\\b' + attribute + '="([^"]+)"([^>]*)>([^<]*)', 'g');
-    return [...html.matchAll(pattern)].map(match => {
-      const id = /\bid="([^"]+)"/.exec(match[0])?.[1];
-      const button = id ? elements[id] : new Element();
-      button.dataset[attribute.slice(5)] = match[1];
-      button.dataset.modifiers = /data-modifiers="([^"]+)"/.exec(match[2])?.[1];
-      button.textContent = match[3];
-      return button;
+  function parseSimple(selector) {
+    if (!selector) throw new Error('Empty selector in smoke DOM');
+    let remaining = selector;
+    const tag = /^[\w-]+|^\*/.exec(remaining);
+    const filters = [];
+    if (tag) remaining = remaining.slice(tag[0].length);
+    while (remaining) {
+      const name = /^([.#])([\w-]+)/.exec(remaining);
+      const attribute = /^\[([\w-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\]\s]+)))?\s*\]/.exec(remaining);
+      if (name) {
+        filters.push({kind: name[1] === '.' ? 'class' : 'id', name: name[2]});
+        remaining = remaining.slice(name[0].length);
+      } else if (attribute) {
+        filters.push({kind: 'attribute', name: attribute[1], value: attribute[2] ?? attribute[3] ?? attribute[4]});
+        remaining = remaining.slice(attribute[0].length);
+      } else throw new Error('Unsupported selector in smoke DOM: ' + selector);
+    }
+    return {tag: tag?.[0]?.toLowerCase(), filters};
+  }
+  function matchesSimple(element, selector) {
+    if (selector.tag && selector.tag !== '*' && selector.tag !== element.tagName) return false;
+    return selector.filters.every(filter => {
+      if (filter.kind === 'class') return element.classList.contains(filter.name);
+      if (filter.kind === 'id') return element.attributes.id === filter.name;
+      return Object.hasOwn(element.attributes, filter.name) && (filter.value === undefined || element.attributes[filter.name] === filter.value);
     });
   }
-  const commands = buttons('data-command');
-  const keys = buttons('data-key');
-  const modes = buttons('data-mode');
-  document = new Element(); document.hidden = false; document.activeElement = null; document.body = new Element(); document.documentElement = new Element();
-  document.getElementById = id => elements[id];
-  document.querySelectorAll = selector => {
-    if (selector === '[data-command]') return commands;
-    if (selector === '[data-key]') return keys;
-    if (selector === '[data-mode]') return modes;
-    return [...new Set([...keys, ...commands, elements.deleteTextButton, elements.openPhoneKeyboard, elements.sendTextButton, elements.speechButton])];
-  };
+  function selectAll(selector, context = document) {
+    const chains = selector.split(',').map(part => part.trim().split(/\s+/).map(parseSimple));
+    const matchesChain = (element, chain) => {
+      if (!matchesSimple(element, chain.at(-1))) return false;
+      let ancestor = element.parentElement;
+      for (let index = chain.length - 2; index >= 0; index--) {
+        while (ancestor && !matchesSimple(ancestor, chain[index])) ancestor = ancestor.parentElement;
+        if (!ancestor) return false;
+        ancestor = ancestor.parentElement;
+      }
+      return true;
+    };
+    return allElements.filter(element => {
+      let ancestor = element.parentElement;
+      while (ancestor && ancestor !== context) ancestor = ancestor.parentElement;
+      return ancestor === context && chains.some(chain => matchesChain(element, chain));
+    });
+  }
+  document.hidden = false; document.activeElement = null;
+  document.body = allElements.find(element => element.tagName === 'body');
+  document.documentElement = allElements.find(element => element.tagName === 'html');
+  document.getElementById = id => elements[id] || null;
+  const commands = document.querySelectorAll('[data-command]');
+  const keys = document.querySelectorAll('[data-key]');
+  const modes = document.querySelectorAll('[data-mode]');
   const window = new Element(); window.isSecureContext = false; window.innerHeight = 640;
   window.visualViewport = new Element(); window.visualViewport.height = 640; window.visualViewport.offsetTop = 0;
-  const records = [], stored = new Map(savedMode ? [['watchmouse_mode', savedMode]] : []);
+  if (options.secureSpeech) {
+    window.isSecureContext = true;
+    window.SpeechRecognition = class {
+      constructor() { window.recognition = this; }
+      start() { this.onstart(); }
+      stop() { this.stopCalls = (this.stopCalls || 0) + 1; this.onend(); }
+    };
+  }
+  const records = [], statusRequests = [], stored = options.stored || new Map(savedMode ? [['watchmouse_mode', savedMode]] : []);
+  const timers = new Map();
+  const frames = new Map();
+  let nextTimerId = 1, statusActive = 0, maxStatusActive = 0, statusFailure = null;
+  let clockAdvance = 0, intervalCalls = 0;
+  let holdCommands = Boolean(options.holdCommands), holdStatus = Boolean(options.holdStatus);
+  const pendingNetwork = [];
+  function scheduleTimeout(callback, delay) {
+    if (delay <= 100 && !options.manualMotion) return setTimeout(callback, delay);
+    const id = nextTimerId++; timers.set(id, {callback, delay}); return id;
+  }
+  function cancelTimeout(id) { if (!timers.delete(id)) clearTimeout(id); }
+  function runStatusTimer() {
+    const entry = [...timers.entries()].sort((a, b) => a[1].delay - b[1].delay)[0];
+    if (!entry) return false;
+    timers.delete(entry[0]); clockAdvance += entry[1].delay; entry[1].callback(); return entry[1].delay;
+  }
+  function runMotionTimer() {
+    const entry = [...timers.entries()].find(([, timer]) => timer.delay <= 100);
+    if (!entry) return false;
+    timers.delete(entry[0]); clockAdvance += entry[1].delay; entry[1].callback(); return true;
+  }
+  function releaseOneCommand() {
+    const entry = pendingNetwork.find(request => request.kind === 'command');
+    if (!entry) return false;
+    clockAdvance += 90; entry.release(); return true;
+  }
+  function networkWait(kind, signal) {
+    const held = kind === 'status' ? holdStatus : holdCommands;
+    const delay = kind === 'status' ? options.statusDelay || 0 : options.commandDelay || 2;
+    return new Promise((resolve, reject) => {
+      let timer;
+      const entry = {kind, release: () => finish()};
+      const abort = () => finish(Object.assign(new Error('aborted'), {name: 'AbortError'}));
+      function finish(error) {
+        if (timer) clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
+        const index = pendingNetwork.indexOf(entry);
+        if (index >= 0) pendingNetwork.splice(index, 1);
+        if (error) reject(error); else resolve();
+      }
+      if (signal?.aborted) { abort(); return; }
+      signal?.addEventListener('abort', abort, {once: true});
+      if (held) pendingNetwork.push(entry); else timer = setTimeout(() => finish(), delay);
+    });
+  }
+  function resumeNetwork(kind) {
+    if (kind === 'command') holdCommands = false; else holdStatus = false;
+    for (const entry of [...pendingNetwork]) if (entry.kind === kind) entry.release();
+  }
+
+  const statusResult = {app: 'WatchMouse', paired: true, ...inputStatus};
   let active = 0, maxActive = 0, failure = null;
+  const dragState = {held: false}, commandEffects = [], beacons = [];
+  const browserLocation = {href: options.href || 'http://192.168.1.5:53514/?token=testtoken123456789', host: '192.168.1.5:53514'};
+  const historyUpdates = [];
+  if (!options.noHistory) window.history = {replaceState(_state, _title, href) { browserLocation.href = String(href); historyUpdates.push(browserLocation.href); }};
   const sandbox = {
     console, document, window, URL, Map, Promise, Math, Number, TypeError, Error, JSON, Array, Blob, Event, Intl,
-    AbortController, setTimeout, clearTimeout, setInterval: () => 0, performance,
-    location: {href: 'http://192.168.1.5:53514/?token=testtoken123456789', host: '192.168.1.5:53514'},
+    AbortController, setTimeout: scheduleTimeout, clearTimeout: cancelTimeout, setInterval: () => {intervalCalls++; return 0;}, performance: {now: () => performance.now() + clockAdvance},
+    location: browserLocation,
     localStorage: {getItem: key => stored.get(key) || null, setItem: (key, value) => stored.set(key, value)},
-    matchMedia: () => ({matches: false}), requestAnimationFrame: callback => callback(),
-    navigator: {sendBeacon: () => true},
-    fetch: async (url, options) => {
-      if (url.startsWith('/api/status')) return {ok: true, json: async () => ({app: 'WatchMouse', paired: true})};
+    matchMedia: () => ({matches: false}),
+    requestAnimationFrame: callback => {
+      const id = nextTimerId++;
+      frames.set(id, setTimeout(() => {frames.delete(id); callback();}, 16));
+      return id;
+    },
+    cancelAnimationFrame: id => {clearTimeout(frames.get(id)); frames.delete(id);},
+    navigator: {onLine: true, sendBeacon: (url, blob) => {
+      beacons.push({url, blob});
+      if (options.simulateDragRace) { dragState.held = false; commandEffects.push('beacon MU'); }
+      return true;
+    }},
+    fetch: async (url, requestOptions) => {
+      if (url.startsWith('/api/status')) {
+        statusActive++; maxStatusActive = Math.max(maxStatusActive, statusActive);
+        statusRequests.push({url, token: requestOptions.headers?.['X-WatchMouse-Token']});
+        try { await networkWait('status', requestOptions.signal); } finally { statusActive--; }
+        if (statusFailure) throw new TypeError('network request failed');
+        return {ok: true, json: async () => ({...statusResult})};
+      }
       active++; maxActive = Math.max(maxActive, active);
-      records.push(JSON.parse(options.body));
-      await new Promise(resolve => setTimeout(resolve, 2));
-      active--;
+      const packet = JSON.parse(requestOptions.body);
+      records.push(packet);
+      try { await networkWait('command', requestOptions.signal); } finally { active--; }
       if (failure) {
-        const {status, error} = failure; failure = null;
-        return {ok: false, status, json: async () => ({ok: false, error})};
+        const {status, error, errorCode} = failure; failure = null;
+        return {ok: false, status, json: async () => ({ok: false, error, errorCode})};
+      }
+      if (options.simulateDragRace && ['MD', 'MU'].includes(packet.command)) {
+        dragState.held = packet.command === 'MD'; commandEffects.push(packet.command);
       }
       return {ok: true, json: async () => ({ok: true})};
     }
@@ -103,26 +273,22 @@ function createApp(savedMode = null) {
     elements.textInput.setSelectionRange(start, end);
     elements.textInput.emit('input');
   }
-  return {elements, document, window, commands, keys, modes, records, stored, draft, maxActive: () => maxActive, failNext: (status, error) => {failure = {status, error};}};
+  return {elements, document, window, dragState, commandEffects, beacons, location: browserLocation, historyUpdates, commands, keys, modes, records, stored, draft, statusRequests, timers, frames, runStatusTimer, runMotionTimer, releaseOneCommand, maxStatusActive: () => maxStatusActive, maxActive: () => maxActive, active: () => active, rectReads: () => rectReads, scrollCalls: () => scrollCalls, intervalCalls: () => intervalCalls, holdCommands: () => {holdCommands = true;}, holdStatus: () => {holdStatus = true;}, resumeCommands: () => resumeNetwork('command'), resumeStatus: () => resumeNetwork('status'), failNext: (status, error, errorCode) => {failure = {status, error, errorCode};}, setStatusFailure: fail => {statusFailure = fail;}, setStatus: update => Object.assign(statusResult, update)};
 }
 
 (async () => {
   const app = createApp();
   const {elements, document, commands, records, stored, draft} = app;
   await wait();
-  assert.equal(elements.connectionButton.attributes['aria-label'], '已连接，打开连接设置');
-  assert.equal(elements.connectionButton.textContent, '', 'connection has only a dot');
+  assert.equal(elements.connectionButton.attributes['aria-label'], 'Connected; open connection settings');
   assert.equal(elements.actionFeedback.textContent, '', 'success does not announce or display text');
   assert(!elements.mousePanel.hidden && elements.douyinPanel.hidden && elements.keyboardPanel.hidden);
   assert.equal(document.activeElement, null);
   assert(elements.speechButton.hidden);
-  assert(!/<header|<h[12]|<details/.test(html), 'no visible title or advanced panel');
-  assert(!/TRACKPAD|PHONE INPUT|在这里滑动|更多电脑按键|当前位置|已发送/.test(html));
-  assert(!/media-controls/.test(html), 'video controls only appear in Douyin mode');
-  assert(!/touchpad-grid|cursor-symbol|mouse-footer/.test(html), 'one integrated undecorated mouse controller');
-  assert(!/scrollIntoView/.test(source), 'keyboard must not programmatically scroll the page');
-  assert.equal(app.keys.length, 5, 'only three video keys and Enter/space');
-  assert(!/data-key="delete"/.test(html), 'common delete must not send forward Delete');
+  assert.deepEqual(document.querySelectorAll('.missing-control button'), []);
+  assert.deepEqual(document.querySelectorAll('[data-missing]'), []);
+  const inputButtons = document.querySelectorAll('.draft-actions button, .draft-composer button');
+  assert(inputButtons.includes(elements.sendTextButton) && !inputButtons.includes(elements.douyinModeButton));
 
   elements.douyinModeButton.click();
   assert(elements.mousePanel.hidden && !elements.douyinPanel.hidden && elements.keyboardPanel.hidden);
@@ -131,6 +297,7 @@ function createApp(savedMode = null) {
   elements.keyboardModeButton.click();
   assert(!elements.mousePanel.hidden && elements.douyinPanel.hidden && !elements.keyboardPanel.hidden);
   assert.equal(document.activeElement, elements.textInput, 'trusted keyboard-mode click focuses native textarea');
+  assert.equal(app.scrollCalls(), 0);
   elements.mouseModeButton.click();
   assert(elements.keyboardPanel.hidden && !elements.mousePanel.hidden);
   assert.equal(document.activeElement, null);
@@ -211,8 +378,7 @@ function createApp(savedMode = null) {
   assert.equal(elements.textInput.selectionStart, 2);
   assert.equal(document.activeElement, elements.textInput);
   assert.equal(records.length, beforeDraftDelete, 'draft editing does not affect PC');
-  assert.equal(elements.deleteTextButton.textContent, '⌫');
-  assert(elements.deleteTextButton.attributes['aria-label'].includes('删除草稿'));
+  assert(elements.deleteTextButton.attributes['aria-label'].includes('in the draft'));
   assert.equal(elements.textFeedback.textContent, '');
   draft('甲👨‍👩‍👧‍👦'); elements.deleteTextButton.click();
   assert.equal(elements.textInput.value, '甲', 'delete a complete emoji family');
@@ -228,7 +394,7 @@ function createApp(savedMode = null) {
   assert.equal(records.length, beforeDraftDelete);
   draft(''); elements.deleteTextButton.click(); await wait();
   assert.equal(records.at(-1).key, 'backspace');
-  assert(elements.deleteTextButton.attributes['aria-label'].includes('电脑当前窗口按退格'));
+  assert(elements.deleteTextButton.attributes['aria-label'].includes('Backspace in the current computer window'));
 
   draft('中文语音🙂\n第二行');
   elements.textInput.emit('compositionstart');
@@ -245,13 +411,267 @@ function createApp(savedMode = null) {
   assert(records.every(item => item.token === 'testtoken123456789'));
   elements.connectionButton.click();
   assert(!elements.connectionPanel.hidden);
+  assert(app.runStatusTimer()); await wait();
+  assert(!elements.connectionPanel.hidden, 'healthy polling leaves settings open while being edited');
   elements.connectionButton.click();
   assert(elements.connectionPanel.hidden);
-  const failed = createApp(); await wait();
-  failed.draft('保留这段草稿'); failed.failNext(409, 'Windows 未接受输入'); failed.elements.sendTextButton.click(); await wait();
-  assert.equal(failed.elements.textInput.value, '保留这段草稿');
-  assert.equal(failed.elements.textFeedback.textContent, '电脑未接收输入');
-  assert(failed.elements.textFeedback.classList.contains('error'));
-  assert(!failed.elements.textFeedback.classList.contains('visually-hidden'));
-  console.log('PASS: integrated minimal UI/silent success, modes/native focus, viewport resize, mouse/drag, independent scroll rail/fractions/cancel/cleanup, draft deletion/backspace, IME/Unicode send, pairing, failed-send preservation, authenticated serialized requests.');
+  const permissionError = '请在 Mac 系统设置 → 隐私与安全性 → 辅助功能中允许 WatchMouse';
+  const unavailable = createApp(null, {inputReady: false, inputError: permissionError}); await wait();
+  assert.equal(unavailable.stored.get('watchmouse_token'), 'testtoken123456789', 'pairing token remains saved while input permission is denied');
+  assert.equal(unavailable.elements.connectionButton.attributes['aria-label'], 'Disconnected; open connection settings');
+  assert(!unavailable.elements.connectionPanel.hidden);
+  assert.equal(unavailable.elements.connectionMessage.textContent, 'Allow WatchMouse in Mac System Settings → Privacy & Security → Accessibility.');
+  assert.equal(unavailable.elements.actionFeedback.textContent, 'Allow WatchMouse in Mac System Settings → Privacy & Security → Accessibility.');
+  unavailable.draft('授权后发送'); unavailable.elements.sendTextButton.click(); await wait();
+  assert.equal(unavailable.records.length, 0, 'permission-denied status blocks input requests');
+  assert.equal(unavailable.elements.textInput.value, '授权后发送');
+  unavailable.setStatus({inputReady: true, inputError: ''}); assert(unavailable.runStatusTimer()); await wait();
+  assert.equal(unavailable.elements.connectionButton.attributes['aria-label'], 'Connected; open connection settings');
+  unavailable.elements.sendTextButton.click(); await wait();
+  assert.equal(unavailable.records.at(-1).text, '授权后发送');
+  assert.equal(unavailable.elements.textInput.value, '', 'retained draft can be sent after permission is granted');
+  const unspecifiedPermission = createApp(null, {inputReady: false}); await wait();
+  assert.equal(unspecifiedPermission.elements.connectionMessage.textContent, 'Enable input permission on the computer.');
+
+  for (const [backendError, expected] of [
+    [permissionError, 'Allow WatchMouse in Mac System Settings → Privacy & Security → Accessibility.'],
+    ['Windows 未接受输入。请确认目标窗口没有以管理员身份运行。', 'Windows did not accept input. Check whether the target app is running as administrator.'],
+    ['', 'The computer did not accept input.'],
+    ['x'.repeat(201), 'The computer did not accept input.']
+  ]) {
+    const failed = createApp(); await wait();
+    failed.draft('保留这段草稿'); failed.failNext(409, backendError); failed.elements.sendTextButton.click(); await wait();
+    assert.equal(failed.elements.textInput.value, '保留这段草稿');
+    assert.equal(failed.elements.textFeedback.textContent, expected);
+    assert.equal(failed.elements.connectionMessage.textContent, expected);
+    assert.equal(failed.elements.actionFeedback.textContent, expected);
+    assert(failed.elements.textFeedback.classList.contains('error'));
+    assert(!failed.elements.textFeedback.classList.contains('visually-hidden'));
+    assert(!failed.elements.sendTextButton.disabled);
+  }
+  assert.equal(document.documentElement.lang, 'en', 'new users start in English');
+  assert.equal(elements.languageSelect.value, 'en');
+  assert.equal(elements.keyboardModeButton.textContent, 'Keyboard');
+  assert.equal(elements.textInput.attributes.placeholder, 'Type…');
+  elements.languageSelect.value = 'zh'; elements.languageSelect.emit('change');
+  assert.equal(stored.get('watchmouse_language'), 'zh');
+  assert.equal(document.documentElement.lang, 'zh-CN');
+  assert.equal(elements.keyboardModeButton.textContent, '键鼠');
+  assert.equal(elements.textInput.attributes.placeholder, '输入…');
+  assert.equal(elements.connectionButton.attributes['aria-label'], '已连接，打开连接设置');
+  assert(elements.watchLink.href.includes('lang=zh-CN'));
+  const reopened = createApp(null, {}, {stored, href: 'http://192.168.1.5:53514/'}); await wait();
+  assert.equal(reopened.document.documentElement.lang, 'zh-CN', 'language persists after reopening');
+  assert.equal(reopened.statusRequests[0].token, 'testtoken123456789', 'saved pairing works without QR token');
+  assert.equal(reopened.elements.connectionButton.attributes['aria-label'], '已连接，打开连接设置');
+  const correctedLink = createApp(null, {paired: false}, {
+    href: 'http://192.168.1.5:53514/?token=old-pairing-key&view=mobile#controls'
+  }); await wait();
+  assert.equal(correctedLink.historyUpdates.length, 0, 'invalid pairing does not rewrite the URL');
+  correctedLink.setStatus({paired: true, inputReady: false, inputErrorCode: 'accessibility_permission'});
+  correctedLink.elements.pairingCode.value = 'new-pairing-key'; correctedLink.elements.pairButton.click(); await wait();
+  assert.equal(correctedLink.stored.get('watchmouse_token'), 'new-pairing-key');
+  const correctedUrl = new URL(correctedLink.location.href);
+  assert.equal(correctedUrl.searchParams.get('token'), 'new-pairing-key', 'manual correction replaces stale QR key even before input permission');
+  assert.equal(correctedUrl.searchParams.get('view'), 'mobile');
+  assert.equal(correctedUrl.hash, '#controls');
+  const correctedReload = createApp(null, {}, {stored: correctedLink.stored, href: correctedLink.location.href}); await wait();
+  assert.equal(correctedReload.statusRequests[0].token, 'new-pairing-key', 'reload uses the corrected key from the updated URL');
+  assert.equal(correctedReload.elements.connectionButton.attributes['aria-label'], 'Connected; open connection settings');
+  const historyUnavailable = createApp(null, {}, {noHistory: true}); await wait();
+  assert.equal(historyUnavailable.elements.connectionButton.attributes['aria-label'], 'Connected; open connection settings', 'unavailable History API does not interrupt pairing');
+  assert.equal(historyUnavailable.stored.get('watchmouse_token'), 'testtoken123456789');
+  const speechApp = createApp(null, {}, {secureSpeech: true}); await wait();
+  assert.equal(speechApp.window.recognition.lang, 'zh-CN', 'existing dictation locale is independent of the English interface');
+  speechApp.elements.speechButton.click();
+  assert.equal(speechApp.elements.speechButton.attributes['aria-label'], 'Stop dictation');
+  speechApp.elements.languageSelect.value = 'zh'; speechApp.elements.languageSelect.emit('change');
+  assert.equal(speechApp.window.recognition.lang, 'zh-CN', 'interface selection does not reconfigure dictation');
+  assert.equal(speechApp.window.recognition.stopCalls || 0, 0, 'interface selection does not stop active dictation');
+  assert.equal(speechApp.elements.speechButton.attributes['aria-pressed'], 'true', 'active recording remains active without replacing its SVG');
+  assert.equal(speechApp.elements.speechButton.attributes['aria-label'], '停止语音', 'only dictation control labels change language');
+  speechApp.elements.languageSelect.value = 'en'; speechApp.elements.languageSelect.emit('change');
+  assert.equal(speechApp.window.recognition.stopCalls || 0, 0);
+  assert.equal(speechApp.elements.speechButton.attributes['aria-label'], 'Stop dictation');
+  speechApp.elements.speechButton.click();
+  assert.equal(speechApp.window.recognition.stopCalls, 1, 'the explicit stop control still ends dictation');
+
+  const staleQueue = createApp(); await wait();
+  staleQueue.failNext(409, '', 'input_unavailable');
+  staleQueue.commands.find(button => button.dataset.command === 'C').click();
+  staleQueue.commands.find(button => button.dataset.command === 'RC').click();
+  await wait();
+  assert.equal(staleQueue.records.length, 1, 'disconnect drops input queued behind a failed request');
+  assert(staleQueue.runStatusTimer()); await wait();
+  assert.equal(staleQueue.records.length, 1, 'old queued clicks are not sent after reconnection');
+
+  const reconnect = createApp(); await wait();
+  reconnect.draft('Keep this draft');
+  reconnect.setStatusFailure(true); assert(reconnect.runStatusTimer()); await wait();
+  assert.equal(reconnect.elements.connectionButton.attributes['aria-label'], 'Disconnected; open connection settings');
+  reconnect.commands.find(button => button.dataset.command === 'C').click();
+  assert.equal(reconnect.records.length, 0, 'input is not queued while disconnected');
+  reconnect.setStatusFailure(false); assert(reconnect.runStatusTimer()); await wait();
+  assert.equal(reconnect.elements.connectionButton.attributes['aria-label'], 'Connected; open connection settings');
+  assert.equal(reconnect.elements.textInput.value, 'Keep this draft');
+  assert.equal(reconnect.records.length, 0, 'reconnection never replays stale input');
+  reconnect.elements.sendTextButton.click(); await wait();
+  assert.equal(reconnect.records.at(-1).text, 'Keep this draft');
+  reconnect.document.hidden = true; reconnect.document.emit('visibilitychange');
+  assert.equal(reconnect.timers.size, 0, 'status polling stops while the page is hidden');
+  const hiddenCount = reconnect.statusRequests.length;
+  reconnect.window.emit('online'); await wait();
+  assert.equal(reconnect.statusRequests.length, hiddenCount, 'hidden page does not issue status requests');
+  reconnect.document.hidden = false; reconnect.document.emit('visibilitychange'); await wait();
+  assert.equal(reconnect.statusRequests.length, hiddenCount + 1);
+
+  const hiddenDrag = createApp(null, {}, {simulateDragRace: true}); await wait();
+  hiddenDrag.elements.dragButton.click(); // MD is now in flight.
+  hiddenDrag.commands.find(button => button.dataset.command === 'C').click(); // Queued click ends this drag in the UI.
+  hiddenDrag.elements.dragButton.click(); // A new queued drag is also stale when the page hides.
+  hiddenDrag.keys[0].click(); // A queued video key must be discarded.
+  hiddenDrag.draft('Do not send this old draft'); hiddenDrag.elements.sendTextButton.click();
+  hiddenDrag.document.hidden = true; hiddenDrag.document.emit('visibilitychange');
+  await wait();
+  assert.deepEqual(hiddenDrag.records.map(packet => packet.command), ['MD', 'MU'], 'only ordered mouse-up survives hidden-page cleanup');
+  assert.deepEqual(hiddenDrag.commandEffects, ['beacon MU', 'MD', 'MU'], 'ordered release follows mouse-down when the beacon arrives early');
+  assert.equal(hiddenDrag.dragState.held, false, 'receiver does not remain in drag after the page is hidden');
+  assert.equal(hiddenDrag.elements.textInput.value, 'Do not send this old draft', 'discarded queued text stays in the draft');
+  hiddenDrag.document.hidden = false; hiddenDrag.document.emit('visibilitychange'); await wait();
+  assert.equal(hiddenDrag.records.length, 2, 'resuming does not replay dropped clicks, mouse-down, keys or text');
+
+  const wrongToken = createApp(null, {paired: false}); await wait();
+  assert.equal(wrongToken.elements.connectionMessage.textContent, 'Invalid pairing code. Check the code in the receiver.');
+  assert.equal(wrongToken.timers.size, 0, 'invalid credentials are not retried endlessly');
+  wrongToken.setStatus({paired: true}); wrongToken.elements.pairingCode.value = 'corrected'; wrongToken.elements.pairButton.click(); await wait();
+  assert.equal(wrongToken.stored.get('watchmouse_token'), 'corrected');
+  const overlapping = createApp(null, {}, {statusDelay: 10});
+  overlapping.document.emit('visibilitychange'); overlapping.document.emit('visibilitychange');
+  await wait(); await wait();
+  assert.equal(overlapping.maxStatusActive(), 1, 'multiple resume triggers never overlap status requests');
+  for (const [code, expected] of [
+    ['accessibility_permission', 'Allow WatchMouse in Mac System Settings → Privacy & Security → Accessibility.'],
+    ['windows_elevation', 'Windows did not accept input. Check whether the target app is running as administrator.']
+  ]) {
+    const coded = createApp(null, {inputReady: false, inputErrorCode: code, inputError: 'untranslated backend detail'}); await wait();
+    assert.equal(coded.elements.connectionMessage.textContent, expected);
+    coded.elements.languageSelect.value = 'zh'; coded.elements.languageSelect.emit('change');
+    assert(/[\u4e00-\u9fff]/.test(coded.elements.connectionMessage.textContent), 'dynamic permission feedback switches language');
+  }
+
+  const tail = createApp(); await wait();
+  tail.elements.sensitivity.value = '2'; tail.elements.sensitivity.emit('input');
+  tail.elements.touchpad.emit('pointerdown', {pointerId: 101, pointerType: 'touch', clientX: 100, clientY: 100});
+  tail.elements.touchpad.emit('pointerup', {pointerId: 101, clientX: 110, clientY: 130});
+  await settle(tail);
+  assert.deepEqual(movementTotal(tail), [20, 60], 'pointer-up includes the final position even without a final move event');
+  assert(!tail.records.some(packet => packet.command === 'C'), 'moving before pointer-up must not become a tap');
+  tail.elements.scrollSurface.emit('pointerdown', {pointerId: 102, pointerType: 'touch', clientY: 100});
+  tail.elements.scrollSurface.emit('pointerup', {pointerId: 102, clientY: 140});
+  await settle(tail);
+  assert.equal(tail.records.at(-1).command, 'S -2', 'rail pointer-up also includes its final coordinate');
+
+  const slow = createApp(null, {}, {holdCommands: true, manualMotion: true}); await wait();
+  slow.elements.sensitivity.value = '2'; slow.elements.sensitivity.emit('input');
+  slow.elements.touchpad.emit('pointerdown', {pointerId: 110, pointerType: 'touch', clientX: 0, clientY: 0});
+  slow.elements.scrollSurface.emit('pointerdown', {pointerId: 111, pointerType: 'touch', clientY: 100});
+  for (let step = 1; step <= 24; step++) {
+    slow.elements.touchpad.emit('pointermove', {pointerId: 110, clientX: step * 3, clientY: 0});
+    slow.elements.scrollSurface.emit('pointermove', {pointerId: 111, clientY: 100 + step * 20});
+    slow.runMotionTimer();
+  }
+  slow.elements.touchpad.emit('pointerup', {pointerId: 110, clientX: 80, clientY: 0});
+  slow.elements.scrollSurface.emit('pointerup', {pointerId: 111, clientY: 600});
+  assert.equal(slow.records.length, 1, 'all samples arrive while exactly one command is in flight');
+  for (let response = 0; response < 12 && slow.releaseOneCommand(); response++) await wait();
+  await settle(slow);
+  assert.deepEqual(movementTotal(slow), [160, 0], 'slow requests preserve every movement plus its tail');
+  const wheelTotal = slow.records.filter(packet => packet.command?.startsWith('S ')).reduce((sum, packet) => sum + Number(packet.command.slice(2)), 0);
+  assert.equal(wheelTotal, -25);
+  assert(slow.records.length <= 4, 'one slow in-flight window leaves at most the original scroll plus one accumulated move/scroll batch');
+  assert.equal(slow.maxActive(), 1);
+  assert.equal(slow.rectReads(), 1, 'a continuous gesture reads its layout once rather than on every input event');
+  console.log('PERF: 24 alternating samples during one held request:', slow.records.length, 'packets, full 160 px / 25 wheel steps,', slow.rectReads(), 'layout read (ACKs released manually).');
+
+  const ordered = createApp(); await wait(); ordered.holdCommands();
+  ordered.commands.find(button => button.dataset.command === 'C').click();
+  ordered.elements.sensitivity.value = '2'; ordered.elements.sensitivity.emit('input');
+  ordered.elements.touchpad.emit('pointerdown', {pointerId: 120, pointerType: 'touch', clientX: 0, clientY: 0});
+  ordered.elements.touchpad.emit('pointermove', {pointerId: 120, clientX: 10, clientY: 0});
+  ordered.commands.find(button => button.dataset.command === 'RC').click();
+  ordered.elements.touchpad.emit('pointerup', {pointerId: 120, clientX: 20, clientY: 0});
+  ordered.resumeCommands(); await settle(ordered);
+  assert.deepEqual(ordered.records.map(packet => packet.command), ['C', 'M 20,0', 'RC', 'M 20,0'], 'discrete actions remain barriers between earlier and later motion');
+
+  const large = createApp(); await wait(); large.elements.sensitivity.value = '2'; large.elements.sensitivity.emit('input');
+  large.elements.touchpad.emit('pointerdown', {pointerId: 130, pointerType: 'touch', clientX: 0, clientY: 0});
+  large.elements.touchpad.emit('pointerup', {pointerId: 130, clientX: 10001, clientY: 0}); await settle(large);
+  assert.deepEqual(movementTotal(large), [20002, 0]);
+  assert(large.records.every(packet => Math.abs(Number(packet.command.slice(2).split(',')[0])) <= 4096), 'large accumulated motion remains valid server-size chunks');
+
+  const released = createApp(null, {}, {simulateDragRace: true}); await wait(); released.holdCommands();
+  released.elements.dragButton.click();
+  released.commands.find(button => button.dataset.command === 'C').click(); // UI is no longer dragging, but MD has not completed.
+  assert.equal(released.elements.dragButton.attributes['aria-pressed'], 'false');
+  released.window.visualViewport.emit('resize'); released.window.visualViewport.emit('resize');
+  released.document.hidden = true; released.document.emit('visibilitychange');
+  released.resumeCommands(); await settle(released);
+  assert.deepEqual(released.records.map(packet => packet.command), ['MD', 'MU'], 'an in-flight MD is released even after its queued click changed the UI');
+  assert.deepEqual(released.commandEffects, ['beacon MU', 'MD', 'MU']);
+  assert.equal(released.dragState.held, false);
+  assert.equal(released.beacons.length, 1, 'repeated resize/hide events do not pile up duplicate releases');
+
+  const probeRace = createApp(null, {}, {simulateDragRace: true}); await wait();
+  probeRace.holdStatus(); probeRace.window.emit('online');
+  probeRace.holdCommands(); probeRace.elements.dragButton.click();
+  probeRace.setStatusFailure(true); probeRace.resumeStatus(); await wait();
+  assert.equal(probeRace.elements.connectionButton.attributes['aria-label'], 'Disconnected; open connection settings');
+  probeRace.resumeCommands(); await settle(probeRace);
+  assert.deepEqual(probeRace.records.map(packet => packet.command), ['MD', 'MU'], 'status failure retains an ordered release after the in-flight MD');
+  assert.deepEqual(probeRace.commandEffects, ['beacon MU', 'MD', 'MU']);
+  assert.equal(probeRace.dragState.held, false);
+  assert(probeRace.records.every(packet => packet.token === 'testtoken123456789'), 'safety release keeps the mouse-down token');
+
+  const queuedRelease = createApp(null, {}, {simulateDragRace: true}); await wait(); queuedRelease.holdCommands();
+  queuedRelease.elements.dragButton.click(); queuedRelease.elements.dragButton.click(); // MU is queued before hiding.
+  queuedRelease.document.hidden = true; queuedRelease.document.emit('visibilitychange');
+  assert.equal(queuedRelease.beacons.length, 1, 'a queued normal MU must not suppress the background beacon');
+  queuedRelease.resumeCommands(); await settle(queuedRelease);
+  assert.deepEqual(queuedRelease.records.map(packet => packet.command), ['MD', 'MU']);
+  assert.equal(queuedRelease.dragState.held, false);
+
+  const acceptedText = createApp(); await wait(); acceptedText.holdCommands(); acceptedText.draft('Accepted once');
+  acceptedText.elements.sendTextButton.click(); acceptedText.document.hidden = true; acceptedText.document.emit('visibilitychange');
+  acceptedText.resumeCommands(); await settle(acceptedText);
+  assert.equal(acceptedText.elements.textInput.value, '', 'an acknowledged in-flight text send remains confirmed after hiding');
+  acceptedText.document.hidden = false; acceptedText.document.emit('visibilitychange'); await wait();
+  assert.equal(acceptedText.records.length, 1, 'resuming never repeats accepted text');
+
+  const bounded = createApp(); await wait(); bounded.holdCommands();
+  for (let index = 0; index < 100; index++) bounded.commands.find(button => button.dataset.command === 'C').click();
+  assert.equal(bounded.records.length, 1);
+  assert.equal(bounded.elements.actionFeedback.textContent, 'Input queue is busy. Try again shortly.');
+  bounded.document.hidden = true; bounded.document.emit('visibilitychange'); bounded.resumeCommands(); await settle(bounded);
+  assert.equal(bounded.records.length, 1, 'background cleanup discards accumulated clicks instead of playing them later');
+
+  const suspended = createApp(null, {}, {holdStatus: true});
+  assert.equal(suspended.statusRequests.length, 1);
+  suspended.document.hidden = true; suspended.document.emit('visibilitychange'); await wait();
+  assert.equal(suspended.timers.size, 0, 'hiding aborts the current status probe and removes its timeout');
+  assert.equal(suspended.frames.size, 0);
+  assert.equal(suspended.intervalCalls(), 0, 'idle pages have no permanent heartbeat interval');
+  suspended.window.emit('online'); await wait();
+  assert.equal(suspended.statusRequests.length, 1);
+  suspended.resumeStatus(); suspended.document.hidden = false; suspended.document.emit('visibilitychange'); await wait();
+  assert.equal(suspended.statusRequests.length, 2, 'restoring performs one fresh status check');
+
+  const heartbeat = createApp(); await wait();
+  assert.equal(heartbeat.timers.size, 1, 'healthy idle page has only its status timer');
+  heartbeat.elements.dragButton.click(); await wait();
+  assert(heartbeat.runStatusTimer()); await wait();
+  assert.equal(heartbeat.records.filter(packet => packet.command === 'MD').length, 2, 'only an idle held drag gets a heartbeat');
+  heartbeat.document.hidden = true; heartbeat.document.emit('visibilitychange'); await settle(heartbeat);
+  assert.equal(heartbeat.timers.size, 0, 'no heartbeat or polling remains in the background');
+
+  console.log('PASS: integrated minimal UI/silent success, modes/native focus, viewport resize, mouse/drag, independent scroll rail/fractions/cancel/cleanup, draft deletion/backspace, IME/Unicode send, pairing/input readiness, actionable permission errors/failed-send preservation, authenticated serialized requests, saved EN/ZH interface and pairing, interface-only dictation labels, non-overlapping status checks, permission/restart reconnect, hidden-page suspension, stale-input discard.');
 })().catch(error => {console.error(error); process.exitCode = 1;});

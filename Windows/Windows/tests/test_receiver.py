@@ -4,11 +4,13 @@ from __future__ import annotations
 import http.client
 from html.parser import HTMLParser
 import json
+import socket
 from pathlib import Path
 import sys
 import threading
 import time
 import unittest
+import tempfile
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlencode, urlparse
 from concurrent.futures import ThreadPoolExecutor
@@ -212,6 +214,287 @@ class ReceiverProtocolTests(unittest.TestCase):
         merged = {"Content-Type": "application/json", "X-WatchMouse-Token": "test-token", **(headers or {})}
         return self.request("POST", "/api/command", json.dumps(payload, ensure_ascii=False).encode("utf-8"), merged)
 
+    def wait_connections(self, count, timeout=2):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self.server._connection_lock:
+                if len(self.server._connections) == count:
+                    return
+            time.sleep(0.005)
+        self.fail(f"Expected {count} active connections, got {len(self.server._connections)}")
+
+    def raw_exchange(self, data, half_close=False):
+        """Consume a response on a socket, including an optional trailing request."""
+        connection = socket.create_connection(("127.0.0.1", self.port), timeout=2)
+        try:
+            connection.sendall(data)
+            if half_close:
+                connection.shutdown(socket.SHUT_WR)
+            response = http.client.HTTPResponse(connection)
+            response.begin()
+            result = response.status, dict(response.getheaders()), response.read()
+            self.assert_socket_closed(connection)
+            return result
+        finally:
+            connection.close()
+
+    def assert_socket_closed(self, connection):
+        try:
+            self.assertEqual(b"", connection.recv(1), "Socket must close without another response")
+        except ConnectionResetError:
+            # Windows may reset when the peer closes with unread input bytes.
+            pass
+
+    def test_commands_status_and_no_content_share_one_http11_connection(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=2)
+        accepted = Mock(wraps=self.server.process_request)
+        try:
+            with patch.object(self.server, "process_request", accepted):
+                for command in ("M 1,2", "S -1", "C"):
+                    connection.request("POST", "/api/command", json.dumps({"command": command}),
+                                       {"Content-Type": "application/json", "X-WatchMouse-Token": "test-token"})
+                    response = connection.getresponse()
+                    self.assertEqual(11, response.version)
+                    self.assertEqual(200, response.status)
+                    self.assertTrue(json.loads(response.read())["ok"])
+                    self.assertFalse(response.will_close)
+                connection.request("GET", "/favicon.ico")
+                response = connection.getresponse()
+                self.assertEqual(204, response.status)
+                self.assertIsNone(response.getheader("Content-Length"))
+                self.assertEqual(b"", response.read())
+                connection.request("GET", "/api/status?token=test-token")
+                self.assertEqual(3, json.loads(connection.getresponse().read())["commandCount"])
+                self.assertEqual(1, accepted.call_count)
+            with self.server._connection_lock:
+                peer = next(iter(self.server._connections))
+                self.assertEqual(1, peer.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY))
+        finally:
+            connection.close()
+
+    def test_fully_consumed_errors_do_not_break_next_request(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=2)
+        try:
+            for body, headers, status in (
+                ("{broken", {"Content-Type": "application/json"}, 400),
+                ('{"command":"C"}', {"Content-Type": "application/json"}, 401),
+                ("command=C", {"Content-Type": "text/plain"}, 415),
+            ):
+                connection.request("POST", "/api/command", body, headers)
+                response = connection.getresponse()
+                self.assertEqual(status, response.status)
+                response.read()
+                self.assertFalse(response.will_close)
+            connection.request("POST", "/api/command", '{"command":"C"}',
+                               {"Content-Type": "application/json", "X-WatchMouse-Token": "test-token"})
+            response = connection.getresponse()
+            self.assertEqual(200, response.status)
+            response.read()
+            self.assertEqual(1, self.server.command_count)
+            self.assertEqual(1, len(self.calls))
+        finally:
+            connection.close()
+
+    def test_rejected_unread_bodies_cannot_execute_a_trailing_request(self):
+        trailing = b"GET /c?q=C&token=test-token HTTP/1.1\r\nHost: localhost\r\n\r\n"
+        cases = (
+            (b"POST /missing HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1\r\n\r\nx", 404),
+            (b"POST /api/command HTTP/1.1\r\nHost: localhost\r\nOrigin: http://other.example\r\nContent-Length: 1\r\n\r\nx", 403),
+            (b"POST /api/command HTTP/1.1\r\nHost: localhost\r\nContent-Length: 32769\r\n\r\nx", 400),
+            (b"POST /api/command HTTP/1.1\r\nHost: localhost\r\nContent-Length: -1\r\n\r\nx", 400),
+            (b"POST /api/command HTTP/1.1\r\nHost: localhost\r\nContent-Length: 999999999999999999999999\r\n\r\nx", 400),
+            (b"POST /api/command HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1\r\nContent-Length: 1\r\n\r\nx", 400),
+            (b"POST /api/command HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n", 400),
+            (b"POST /api/command HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\nContent-Length: 1\r\n\r\nx", 400),
+            (b"GET /c?q=C&token=test-token HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1\r\n\r\nx", 400),
+        )
+        for data, expected_status in cases:
+            with self.subTest(data=data[:90]):
+                status, headers, _ = self.raw_exchange(data + trailing)
+                self.assertEqual(expected_status, status)
+                self.assertEqual("close", headers["Connection"])
+                self.assertEqual([], self.calls)
+                self.assertEqual(0, self.server.command_count)
+
+    def test_incomplete_body_cannot_execute_even_if_received_bytes_are_valid_json(self):
+        body = b'{"command":"C"}'
+        data = (b"POST /api/command HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n"
+                b"X-WatchMouse-Token: test-token\r\nContent-Length: " + str(len(body) + 1).encode() + b"\r\n\r\n" + body)
+        status, headers, result = self.raw_exchange(data, half_close=True)
+        self.assertEqual(400, status)
+        self.assertIn("不完整", json.loads(result)["error"])
+        self.assertEqual("close", headers["Connection"])
+        self.assertEqual([], self.calls)
+
+    def test_fragmented_body_is_read_completely_once(self):
+        body = json.dumps({"text": "中文🙂"}, ensure_ascii=False).encode("utf-8")
+        connection = socket.create_connection(("127.0.0.1", self.port), timeout=2)
+        try:
+            connection.sendall(b"POST /api/command HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n"
+                               b"X-WatchMouse-Token: test-token\r\nConnection: close\r\nContent-Length: "
+                               + str(len(body)).encode() + b"\r\n\r\n" + body[:12])
+            self.wait_connections(1)
+            self.assertEqual([], self.calls)
+            connection.sendall(body[12:])
+            response = http.client.HTTPResponse(connection)
+            response.begin()
+            self.assertEqual(200, response.status)
+            response.read()
+            self.assertEqual(1, self.server.command_count)
+            self.assertEqual(8, len(self.calls[0]))
+        finally:
+            connection.close()
+
+    def test_expect_continue_is_flushed_before_body_is_sent(self):
+        body = b'{"command":"C"}'
+        connection = socket.create_connection(("127.0.0.1", self.port), timeout=2)
+        try:
+            connection.sendall(b"POST /api/command HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n"
+                               b"X-WatchMouse-Token: test-token\r\nExpect: 100-continue\r\nConnection: close\r\nContent-Length: "
+                               + str(len(body)).encode() + b"\r\n\r\n")
+            interim = connection.makefile("rb")
+            try:
+                self.assertEqual(b"HTTP/1.1 100 Continue\r\n", interim.readline())
+                self.assertEqual(b"\r\n", interim.readline())
+            finally:
+                interim.close()
+            self.assertEqual([], self.calls)
+            connection.sendall(body)
+            response = http.client.HTTPResponse(connection)
+            response.begin()
+            self.assertEqual(200, response.status)
+            response.read()
+            self.assertEqual(1, len(self.calls))
+        finally:
+            connection.close()
+
+    def test_expect_continue_rejects_oversize_without_waiting_for_body(self):
+        status, headers, _ = self.raw_exchange(
+            b"POST /api/command HTTP/1.1\r\nHost: localhost\r\nExpect: 100-continue\r\nContent-Length: 32769\r\n\r\n")
+        self.assertEqual(400, status)
+        self.assertEqual("close", headers["Connection"])
+        self.assertEqual([], self.calls)
+
+    def test_idle_connection_and_stalled_body_expire(self):
+        self.server.connection_timeout = .1
+        connection = socket.create_connection(("127.0.0.1", self.port), timeout=2)
+        try:
+            connection.sendall(b"GET /api/status HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            response = http.client.HTTPResponse(connection)
+            response.begin()
+            response.read()
+            self.assertEqual(b"", connection.recv(1))
+            self.wait_connections(0)
+        finally:
+            connection.close()
+        status, headers, body = self.raw_exchange(
+            b"POST /api/command HTTP/1.1\r\nHost: localhost\r\nContent-Length: 50\r\n\r\nx")
+        self.assertEqual(400, status)
+        self.assertEqual("close", headers["Connection"])
+        self.assertIn("超时", json.loads(body)["error"])
+        self.assertEqual([], self.calls)
+
+    def test_connection_limit_does_not_spawn_extra_handler_and_recovers(self):
+        self.server.max_connections = 2
+        connections = [socket.create_connection(("127.0.0.1", self.port), timeout=2) for _ in range(2)]
+        try:
+            self.wait_connections(2)
+            with patch.object(self.server, "process_request_thread", wraps=self.server.process_request_thread) as handlers:
+                extra = socket.create_connection(("127.0.0.1", self.port), timeout=2)
+                try:
+                    self.assertEqual(b"", extra.recv(1))
+                    self.assertEqual(0, handlers.call_count)
+                finally:
+                    extra.close()
+            connections.pop().close()
+            self.wait_connections(1)
+            self.assertEqual(200, self.command({"command": "PING"})[0])
+        finally:
+            for connection in connections:
+                connection.close()
+
+    def test_shutdown_interrupts_idle_and_partial_reads_then_refuses_input(self):
+        # On Windows a recv already blocked in select can finish only when its
+        # original socket timeout expires, despite cross-thread shutdown().
+        self.server.connection_timeout = .2
+        idle = socket.create_connection(("127.0.0.1", self.port), timeout=2)
+        partial = socket.create_connection(("127.0.0.1", self.port), timeout=2)
+        try:
+            partial.sendall(b"POST /api/command HTTP/1.1\r\nHost: localhost\r\nContent-Length: 20\r\n\r\nx")
+            self.wait_connections(2)
+            started = time.monotonic()
+            self.server.shutdown()
+            self.server.server_close()
+            self.assertLess(time.monotonic() - started, 1)
+            self.assert_socket_closed(idle)
+            self.assert_socket_closed(partial)
+            self.wait_connections(0)
+            with self.assertRaises(OSError):
+                self.server.execute({"command": "C"}, "127.0.0.1")
+            self.assertEqual([], self.calls)
+        finally:
+            idle.close()
+            partial.close()
+
+    def test_close_waits_for_current_input_before_releasing_and_denies_queued_input(self):
+        entered, finish, closing = threading.Event(), threading.Event(), threading.Event()
+        events, errors = [], []
+        def blocked_input(payload):
+            events.append("execute")
+            entered.set()
+            finish.wait(timeout=2)
+            return "OK"
+        def close():
+            closing.set()
+            self.server.shutdown()
+            self.server.server_close()
+        def queued():
+            try:
+                self.server.execute({"command": "C"}, "queued")
+            except OSError:
+                errors.append("stopped")
+        with patch.object(self.controller, "execute", side_effect=blocked_input), \
+             patch.object(self.controller, "release_all", side_effect=lambda: events.append("release")):
+            executing = threading.Thread(target=self.server.execute, args=({"command": "C"}, "first"))
+            closer = threading.Thread(target=close)
+            waiting = threading.Thread(target=queued)
+            executing.start()
+            try:
+                self.assertTrue(entered.wait(timeout=2))
+                closer.start()
+                self.assertTrue(closing.wait(timeout=2))
+                self.assertTrue(self.server._closing.wait(timeout=2))
+                waiting.start()
+                self.assertEqual(["execute"], events)
+            finally:
+                finish.set()
+                executing.join(timeout=2)
+                if closer.ident is not None:
+                    closer.join(timeout=2)
+                if waiting.ident is not None:
+                    waiting.join(timeout=2)
+            self.assertFalse(executing.is_alive())
+            self.assertFalse(closer.is_alive())
+            self.assertFalse(waiting.is_alive())
+            self.assertEqual(["execute", "release"], events)
+            self.assertEqual(["stopped"], errors)
+
+    def test_permission_state_and_error_codes_remain_compatible(self):
+        with patch.object(self.controller, "input_error", create=True, return_value="需要辅助功能权限"):
+            status, _, body = self.request()
+            public = json.loads(body)
+            self.assertEqual(200, status)
+            self.assertFalse(public["inputReady"])
+            self.assertEqual("", public["inputError"])
+            self.assertEqual("", public["inputErrorCode"])
+            with patch.object(receiver.sys, "platform", "darwin"):
+                _, _, body = self.request(path="/api/status?token=test-token")
+                paired = json.loads(body)
+                self.assertEqual("accessibility_permission", paired["inputErrorCode"])
+                self.assertEqual("需要辅助功能权限", paired["inputError"])
+        self.controller.sender = Mock(side_effect=OSError("需要辅助功能权限"))
+        self.assertEqual("accessibility_permission", json.loads(self.command({"command": "C"})[2])["errorCode"])
+
     def test_public_status_does_not_claim_pairing(self):
         status, headers, body = self.request()
         self.assertEqual(200, status)
@@ -295,7 +578,7 @@ class ReceiverProtocolTests(unittest.TestCase):
         self.controller.sender = Mock(side_effect=OSError("input blocked"))
         status, _, body = self.command({"command": "C"})
         self.assertEqual(409, status)
-        self.assertEqual({"ok": False, "error": "input blocked"}, json.loads(body))
+        self.assertEqual({"ok": False, "error": "input blocked", "errorCode": "input_unavailable"}, json.loads(body))
         self.assertEqual(0, self.server.command_count)
 
     def test_watch_page_requires_no_javascript_and_escapes_messages(self):
@@ -425,6 +708,30 @@ class ReceiverProtocolTests(unittest.TestCase):
         self.assertEqual(401, self.request("POST", "/watch", form)[0])
         self.assertEqual([], self.calls)
 
+
+    def test_watch_language_defaults_english_and_keeps_chinese_actions(self):
+        _, _, english = self.request(path='/watch?token=test-token')
+        self.assertIn("lang='en'", english)
+        self.assertIn('Play / Pause', english)
+        self.assertIn("name='lang' value='en'", english)
+        _, _, chinese = self.request(path='/watch?token=test-token&lang=zh-CN')
+        self.assertIn("lang='zh-CN'", chinese)
+        self.assertIn('播放 / 暂停', chinese)
+        link = WatchLinks(chinese).links[0]
+        self.assertEqual(['zh-CN'], parse_qs(urlparse(link).query)['lang'])
+        status, headers, _ = self.request(path=link)
+        self.assertEqual(303, status)
+        self.assertEqual(['zh-CN'], parse_qs(urlparse(headers['Location']).query)['lang'])
+
+    def test_watch_localizes_known_windows_input_denial(self):
+        self.controller.sender = Mock(side_effect=OSError('Windows 未接受输入。请确认目标窗口没有以管理员身份运行。'))
+        nonce = self.server.register_watch_action('C')
+        status, headers, _ = self.request(path='/watch?' + urlencode({'token':'test-token','action':nonce,'lang':'en'}))
+        self.assertEqual(303,status)
+        _, _, page = self.request(path=headers['Location'])
+        self.assertIn('Windows rejected input',page)
+        self.assertNotIn('Windows 未接受输入',page)
+
     def test_unknown_paths_do_not_expose_files(self):
         for path in ("/receiver.py", "/../receiver.py", "/%2e%2e/receiver.py", "/config.json"):
             self.assertEqual(404, self.request(path=path)[0])
@@ -435,6 +742,22 @@ class ReceiverProtocolTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 self.server.server_close()
         self.assertEqual(-1, self.server.socket.fileno())
+
+
+
+class PairingPersistenceTests(unittest.TestCase):
+    def test_settings_keep_pairing_key_across_restart_and_language_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(receiver, 'settings_path', return_value=Path(directory)/'config.json'):
+                first=receiver.load_settings()
+                self.assertGreaterEqual(len(first['token']),16)
+                token=first['token']
+                first['language']='zh-CN'
+                receiver.save_settings(first)
+                for _ in range(3):
+                    again=receiver.load_settings()
+                    self.assertEqual(token,again['token'])
+                    self.assertEqual('zh-CN',again['language'])
 
 
 if __name__ == "__main__":

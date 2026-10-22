@@ -24,7 +24,7 @@ button:disabled { opacity: .45; cursor: wait; }
 }
 .workspace { display: grid; grid-template-columns: minmax(0,1fr); grid-template-rows: minmax(0,1fr); gap: 10px; flex: 1; min-height: 0; min-width: 0; overflow: auto; overscroll-behavior: contain; }
 .mouse-controller {
-  display: grid; grid-template-columns: minmax(0,1fr) 48px; grid-template-rows: minmax(0,1fr) 64px;
+  display: grid; grid-template-columns: minmax(0,1fr) 68px; grid-template-rows: minmax(0,1fr) 64px;
   min-width: 0; min-height: 110px; border: 1px solid var(--line); border-radius: 28px; overflow: hidden;
   background: var(--surface); box-shadow: 0 2px 0 #0005, inset 0 1px 0 #ffffff04;
 }
@@ -46,12 +46,12 @@ button:disabled { opacity: .45; cursor: wait; }
 .drag-button .icon { width: 19px; height: 19px; }
 .drag-button[aria-pressed=true] { background: var(--accent); color: var(--ink); box-shadow: 0 0 18px #d9274610; }
 .drag-button[aria-pressed=true] .icon { color: inherit; }
-.scroll-rail { grid-area: 1/2/3/3; display: flex; flex-direction: column; min-height: 0; padding: 6px 0; border-left: 1px solid #2c2e38; background: #16181f; }
-.scroll-rail button { display: grid; place-items: center; height: 44px; min-height: 44px; flex: none; color: #9196a9; border-radius: 14px; }
+.scroll-rail { grid-area: 1/2/3/3; display: flex; flex-direction: column; min-height: 0; padding: 4px 0; border-left: 1px solid #2c2e38; background: #16181f; }
+.scroll-rail button { display: grid; place-items: center; height: 36px; min-height: 36px; flex: none; color: #9196a9; border-radius: 14px; }
 .scroll-rail button .icon { width: 18px; height: 18px; }
-.scroll-surface { flex: 1; min-height: 0; position: relative; touch-action: none; -webkit-user-select: none; user-select: none; }
-.scroll-surface::before { content: ""; position: absolute; inset: 6px 12px; border-radius: 30px; background: #0e1016; border: 1px solid #292c37; pointer-events: none; }
-.scroll-surface::after { content: ""; position: absolute; left: 50%; top: 50%; width: 3px; height: 30px; max-height: 50%; border-radius: 3px; background: #747b91; transform: translate(-50%,-50%); pointer-events: none; transition: background .15s, box-shadow .15s; }
+.scroll-surface { flex: 1; min-height: 96px; position: relative; touch-action: none; -webkit-user-select: none; user-select: none; }
+.scroll-surface::before { content: ""; position: absolute; inset: 4px 10px; border-radius: 30px; background: #0e1016; border: 1px solid #292c37; pointer-events: none; }
+.scroll-surface::after { content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 48px; max-height: 55%; border-radius: 4px; background: #747b91; transform: translate(-50%,-50%); pointer-events: none; transition: background .15s, box-shadow .15s; }
 .scroll-surface.active::after { background: var(--accent); box-shadow: 0 0 10px #d9274644; }
 .scroll-surface.active::before { border-color: #8b3649; }
 
@@ -127,7 +127,7 @@ textarea:focus { outline: none; }
 }
 @media (max-width:350px) {
   .app-shell { padding-left: 8px; padding-right: 8px; gap: 10px; }
-  .mouse-controller { grid-template-columns: minmax(0,1fr) 46px; border-radius: 24px; }
+  .mouse-controller { grid-template-columns: minmax(0,1fr) 60px; border-radius: 24px; }
   .mouse-buttons { grid-template-columns: minmax(0,1fr) 48px minmax(0,1fr); padding-left: 4px; padding-right: 4px; }
   .mouse-button { gap: 5px; font-size: 12px; }
   .drag-button { font-size: 10px; gap: 2px; }
@@ -145,6 +145,7 @@ textarea:focus { outline: none; }
 .compact-viewport .drag-button span { display: none; }
 .compact-viewport .pad-mark { width: 30px; height: 30px; }
 .compact-viewport .scroll-rail { padding: 0; }
+.compact-viewport .scroll-surface { min-height: 0; }
 .compact-viewport.keyboard-visible .scroll-rail > button { display: none; }
 .compact-viewport .keyboard-panel { border-radius: 15px; gap: 0; }
 .compact-viewport .draft-composer { min-height: 44px; }

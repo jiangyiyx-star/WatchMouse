@@ -331,7 +331,7 @@ class Handler(BaseHTTPRequestHandler):
                              "port": self.server.server_port, "commandCount": self.server.command_count,
                              "lastClient": self.server.last_client if paired else "",
                              "lastCommandAt": self.server.last_command_at if paired else 0,
-                             "features": ["mouse", "keyboard", "unicode", "watch"]})
+                             "features": ["mouse", "keyboard", "unicode", "watch", "gamepad"]})
         elif url.path == "/c":
             command = query.get("q", [""])[0]
             if command == "PING":

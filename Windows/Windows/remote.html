@@ -29,6 +29,7 @@
     <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2m-7 9v3m-4 0h8"/></symbol>
     <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="3" fill="currentColor" stroke="none"/></symbol>
     <symbol id="i-watch" viewBox="0 0 24 24"><rect x="5" y="6" width="14" height="12" rx="4"/><path d="m8 6 1-4h6l1 4m-8 12 1 4h6l1-4m-4-9v3l2 1"/></symbol>
+    <symbol id="i-gamepad" viewBox="0 0 24 24"><path d="M6.5 8h11a4.5 4.5 0 0 1 4.3 5.8l-1.2 4A3.5 3.5 0 0 1 17 20h-2.2a2 2 0 0 1-1.7-1l-.6-1a2 2 0 0 0-1.7-1h-.6a2 2 0 0 0-1.7 1l-.6 1a2 2 0 0 1-1.7 1H7a3.5 3.5 0 0 1-3.6-2.2l-1.2-4A4.5 4.5 0 0 1 6.5 8Z"/><path d="M8 12v4m-2-2h4"/><circle cx="15.2" cy="12.2" r=".9" fill="currentColor" stroke="none"/><circle cx="17.8" cy="14.2" r=".9" fill="currentColor" stroke="none"/><circle cx="15.2" cy="16.2" r=".9" fill="currentColor" stroke="none"/><circle cx="12.6" cy="14.2" r=".9" fill="currentColor" stroke="none"/></symbol>
   </defs></svg>
   <div class="app-shell">
     <main class="workspace">
@@ -36,6 +37,43 @@
         <button type="button" data-key="up" class="douyin-previous" aria-label="上一个视频" data-i18n-aria="previousVideo"><svg class="icon " viewBox="0 0 24 24" aria-hidden="true"><use href="#i-up"/></svg></button>
         <button type="button" data-key="space" class="douyin-play" aria-label="播放或暂停" data-i18n-aria="playPause"><span class="play-disc"><svg class="icon " viewBox="0 0 32 24" aria-hidden="true"><use href="#i-play-pause"/></svg></span></button>
         <button type="button" data-key="down" class="douyin-next" aria-label="下一个视频" data-i18n-aria="nextVideo"><svg class="icon " viewBox="0 0 24 24" aria-hidden="true"><use href="#i-down"/></svg></button>
+      </section>
+      <section id="gamepadPanel" class="gamepad-panel" hidden aria-label="手柄控制" data-i18n-aria="gamepadControls" data-layout="xbox">
+        <div class="gamepad-toolbar">
+          <div class="layout-switcher" role="group" aria-label="手柄布局" data-i18n-aria="gamepadLayout">
+            <button id="xboxLayoutButton" type="button" data-layout="xbox" aria-pressed="true">Xbox</button>
+            <button id="psLayoutButton" type="button" data-layout="ps" aria-pressed="false">PlayStation</button>
+          </div>
+          <p class="gamepad-hint" data-i18n="gamepadHint">按键映射为键盘，适合支持键鼠的游戏</p>
+        </div>
+        <div class="gamepad-body">
+          <div class="gamepad-shoulders">
+            <button type="button" class="shoulder" data-pad="lt" aria-label="LT"><span class="xbox-label">LT</span><span class="ps-label">L2</span></button>
+            <button type="button" class="shoulder" data-pad="lb" aria-label="LB"><span class="xbox-label">LB</span><span class="ps-label">L1</span></button>
+            <button type="button" class="shoulder" data-pad="rb" aria-label="RB"><span class="xbox-label">RB</span><span class="ps-label">R1</span></button>
+            <button type="button" class="shoulder" data-pad="rt" aria-label="RT"><span class="xbox-label">RT</span><span class="ps-label">R2</span></button>
+          </div>
+          <div class="gamepad-meta">
+            <button type="button" class="meta-button" data-pad="select" aria-label="Select"><span class="xbox-label">View</span><span class="ps-label">Share</span></button>
+            <button type="button" class="meta-button" data-pad="start" aria-label="Start"><span class="xbox-label">Menu</span><span class="ps-label">Options</span></button>
+          </div>
+          <div class="gamepad-controls">
+            <div class="stick" data-stick="left" aria-label="左摇杆" data-i18n-aria="leftStick"><span class="stick-knob"></span></div>
+            <div class="dpad" aria-label="方向键" data-i18n-aria="dpad">
+              <button type="button" data-pad="dup" class="dpad-up" aria-label="上">▲</button>
+              <button type="button" data-pad="dleft" class="dpad-left" aria-label="左">◀</button>
+              <button type="button" data-pad="dright" class="dpad-right" aria-label="右">▶</button>
+              <button type="button" data-pad="ddown" class="dpad-down" aria-label="下">▼</button>
+            </div>
+            <div class="face-buttons" aria-label="功能键" data-i18n-aria="faceButtons">
+              <button type="button" data-pad="y" class="face-y" aria-label="Y"><span class="xbox-label">Y</span><span class="ps-label">△</span></button>
+              <button type="button" data-pad="x" class="face-x" aria-label="X"><span class="xbox-label">X</span><span class="ps-label">□</span></button>
+              <button type="button" data-pad="b" class="face-b" aria-label="B"><span class="xbox-label">B</span><span class="ps-label">○</span></button>
+              <button type="button" data-pad="a" class="face-a" aria-label="A"><span class="xbox-label">A</span><span class="ps-label">✕</span></button>
+            </div>
+            <div class="stick" data-stick="right" aria-label="右摇杆" data-i18n-aria="rightStick"><span class="stick-knob"></span></div>
+          </div>
+        </div>
       </section>
       <section id="mousePanel" class="mouse-controller" aria-label="鼠标控制" data-i18n-aria="mouseControls">
         <div id="touchpad" class="touchpad" aria-label="触控板：单指移动，轻点单击，双指滚动" data-i18n-aria="touchpad">
@@ -84,6 +122,7 @@
         <nav class="mode-switcher" aria-label="遥控模式" data-i18n-aria="controlMode">
           <button id="douyinModeButton" type="button" data-mode="douyin" aria-pressed="false"><svg class="icon " viewBox="0 0 24 24" aria-hidden="true"><use href="#i-play"/></svg><span data-i18n="video">抖音</span></button>
           <button id="mouseModeButton" type="button" data-mode="mouse" aria-pressed="true"><svg class="icon " viewBox="0 0 24 24" aria-hidden="true"><use href="#i-mouse"/></svg><span data-i18n="mouse">鼠标</span></button>
+          <button id="gamepadModeButton" type="button" data-mode="gamepad" aria-pressed="false"><svg class="icon " viewBox="0 0 24 24" aria-hidden="true"><use href="#i-gamepad"/></svg><span data-i18n="gamepad">手柄</span></button>
           <button id="keyboardModeButton" type="button" data-mode="keyboard" aria-pressed="false"><svg class="icon " viewBox="0 0 24 24" aria-hidden="true"><use href="#i-keyboard"/></svg><span data-i18n="keyboard">键鼠</span></button>
         </nav>
         <button id="connectionButton" class="status-button" type="button" aria-label="正在连接，打开连接设置" data-i18n-aria="connectingSettings" aria-controls="connectionPanel" aria-expanded="false"><span id="statusDot" class="status-dot" aria-hidden="true"></span></button>

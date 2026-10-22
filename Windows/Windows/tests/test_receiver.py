@@ -154,6 +154,47 @@ class InputSafetyTests(unittest.TestCase):
         self.controller.execute({"command": "MU"})
         self.assertEqual([0x0002, 0x0004], [event[-1] for event in self.events()])
 
+    def test_gamepad_key_holds_down_until_the_phone_releases_it(self):
+        self.controller.execute({"key": "space", "state": "down"})
+        self.assertEqual([("key", 0x20, 0, 0)], self.events())
+        self.assertEqual({"space"}, self.controller.held_keys)
+        self.controller.execute({"key": "space", "state": "up"})
+        self.assertEqual([("key", 0x20, 0, 0), ("key", 0x20, 0, 2)], self.events())
+        self.assertEqual(set(), self.controller.held_keys)
+
+    def test_repeated_hold_and_release_never_duplicate_events(self):
+        for state in ("down", "down", "up", "up"):
+            self.controller.execute({"key": "w", "state": state})
+        self.assertEqual([("key", 87, 0, 0), ("key", 87, 0, 2)], self.events())
+
+    def test_gamepad_release_frees_every_held_key(self):
+        for name in ("w", "d", "space"):
+            self.controller.execute({"key": name, "state": "down"})
+        self.calls.clear()
+        self.controller.execute({"command": "MU"})
+        released = sorted(event[1] for event in self.events() if event[-1] == 2)
+        self.assertEqual([0x20, 68, 87], released)
+        self.assertEqual(set(), self.controller.held_keys)
+
+    def test_stuck_gamepad_key_is_released_after_the_phone_stops_sending(self):
+        self.controller.execute({"key": "w", "state": "down"})
+        self.calls.clear()
+        self.controller.last_activity = time.monotonic() - 6
+        self.controller._hold_expired()
+        self.assertEqual([("key", 87, 0, 2)], self.events())
+        self.assertEqual(set(), self.controller.held_keys)
+
+    def test_hold_and_release_reject_bad_state_and_modifiers(self):
+        for payload in (
+            {"key": "w", "state": "pressed"},
+            {"key": "w", "state": 1},
+            {"key": "w", "state": "down", "modifiers": ["ctrl"]},
+        ):
+            with self.subTest(payload=str(payload)):
+                with self.assertRaises((ValueError, TypeError)):
+                    self.controller.execute(payload)
+                self.assertEqual([], self.calls)
+
     def test_failed_drag_release_still_clears_timer_and_local_state(self):
         self.controller.execute({"command": "MD"})
         self.controller.sender = Mock(side_effect=OSError("injection blocked"))

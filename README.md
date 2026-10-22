@@ -48,6 +48,7 @@ Desktop builds include Python and the web UI. You do not need to install Python 
 - **Mouse:** one-finger movement, tap to click, left/right buttons, drag toggle, two-finger scrolling, and a separate one-finger scroll strip.
 - **Keyboard:** draft text on your phone and send it when ready. Supports Chinese, emoji, phone IME, and keyboard dictation. Text and input events go to the focused desktop app.
 - **Video:** large previous, play/pause, and next buttons for apps that respond to arrow/space keys.
+- **Gamepad:** Xbox and PlayStation layouts with dual sticks, d-pad, ABXY/△○□✕, shoulders, and View/Menu. Buttons hold down while pressed and release on lift. Keys map to the keyboard, so it suits games that accept keyboard input.
 - **Language:** English by default, with saved Simplified Chinese selection on the phone and both desktop receivers.
 - **Mac shortcuts:** protocol Ctrl/Win modifiers map to Command; Alt maps to Option.
 - **Watch:** an experimental JavaScript-free `/watch` page. Physical Apple Watch compatibility has not been verified.

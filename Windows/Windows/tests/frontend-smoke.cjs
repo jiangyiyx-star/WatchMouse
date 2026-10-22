@@ -154,6 +154,23 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
       return ancestor === context && chains.some(chain => matchesChain(element, chain));
     });
   }
+  // Standard DOM API: nearest ancestor (or self) matching the selector.
+  Element.prototype.closest = function (selector) {
+    const chains = selector.split(',').map(part => part.trim().split(/\s+/).map(parseSimple));
+    for (let node = this; node; node = node.parentElement) {
+      for (const chain of chains) {
+        if (!matchesSimple(node, chain.at(-1))) continue;
+        let ancestor = node.parentElement, matched = true;
+        for (let index = chain.length - 2; index >= 0; index--) {
+          while (ancestor && !matchesSimple(ancestor, chain[index])) ancestor = ancestor.parentElement;
+          if (!ancestor) { matched = false; break; }
+          ancestor = ancestor.parentElement;
+        }
+        if (matched) return node;
+      }
+    }
+    return null;
+  };
   document.hidden = false; document.activeElement = null;
   document.body = allElements.find(element => element.tagName === 'body');
   document.documentElement = allElements.find(element => element.tagName === 'html');
@@ -305,6 +322,68 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
   assert(!restored.elements.keyboardPanel.hidden);
   assert.equal(restored.document.activeElement, null, 'restoring mode must not auto-open native keyboard');
   assert(createApp('invalid').elements.keyboardPanel.hidden);
+
+  // Gamepad mode: Xbox/PlayStation layouts, press-and-hold buttons, analog sticks.
+  elements.gamepadModeButton.click();
+  assert(elements.mousePanel.hidden && elements.douyinPanel.hidden && elements.keyboardPanel.hidden && !elements.gamepadPanel.hidden);
+  assert.equal(stored.get('watchmouse_mode'), 'gamepad');
+  assert.equal(elements.gamepadModeButton.attributes['aria-pressed'], 'true');
+  assert.equal(elements.gamepadPanel.dataset.layout, 'xbox', 'Xbox layout is the default');
+  assert.equal(elements.xboxLayoutButton.attributes['aria-pressed'], 'true');
+  elements.psLayoutButton.click();
+  assert.equal(elements.gamepadPanel.dataset.layout, 'ps', 'PlayStation layout swaps in DualShock labels');
+  assert.equal(stored.get('watchmouse_pad_layout'), 'ps');
+  assert.equal(elements.psLayoutButton.attributes['aria-pressed'], 'true');
+  assert.equal(elements.xboxLayoutButton.attributes['aria-pressed'], 'false');
+  elements.xboxLayoutButton.click();
+  assert.equal(elements.gamepadPanel.dataset.layout, 'xbox');
+  assert.equal(createApp('gamepad', {}, {stored: new Map([['watchmouse_pad_layout', 'ps']])}).elements.gamepadPanel.dataset.layout, 'ps', 'chosen layout persists across reloads');
+
+  const padButton = name => document.querySelectorAll('#gamepadPanel [data-pad]').find(button => button.dataset.pad === name);
+  records.length = 0;
+  padButton('a').emit('pointerdown', {pointerId: 21, button: 0});
+  assert(padButton('a').classList.contains('is-pressed'));
+  padButton('a').emit('pointerup', {pointerId: 21, button: 0});
+  await wait();
+  assert.deepEqual(records.map(packet => [packet.key, packet.state]), [['space', 'down'], ['space', 'up']],
+    'A is held as its mapped key and released on pointerup');
+
+  // Held shoulders and sticks nest by reference count, so two sources for one
+  // key never release it early.
+  records.length = 0;
+  padButton('dup').emit('pointerdown', {pointerId: 22, button: 0});
+  await wait();
+  assert.deepEqual(records.map(packet => [packet.key, packet.state]), [['w', 'down']], 'd-pad up holds W');
+  const leftStick = document.querySelectorAll('#gamepadPanel .stick').find(node => node.dataset.stick === 'left');
+  leftStick.getBoundingClientRect = () => ({left: 0, top: 0, width: 100, height: 100});
+  leftStick.emit('pointerdown', {pointerId: 23, button: 0, clientX: 50, clientY: 50});
+  await wait();
+  assert.equal(records.length, 1, 'stick centre stays inside the dead zone');
+  leftStick.emit('pointermove', {pointerId: 23, clientX: 50, clientY: 2});
+  await wait();
+  assert.equal(records.length, 1, 'd-pad up already holds W, so the stick does not re-send the same key');
+  leftStick.emit('pointermove', {pointerId: 23, clientX: 98, clientY: 50});
+  await wait();
+  assert.deepEqual(records.slice(1).map(packet => [packet.key, packet.state]), [['d', 'down']], 'stick right adds D');
+  leftStick.emit('pointerup', {pointerId: 23, clientX: 98, clientY: 50});
+  await wait();
+  assert.deepEqual(records.slice(2).map(packet => [packet.key, packet.state]), [['d', 'up']],
+    'releasing the stick drops only its own key');
+  padButton('dup').emit('pointerup', {pointerId: 22, button: 0});
+  await wait();
+  assert.deepEqual(records.slice(3).map(packet => [packet.key, packet.state]), [['w', 'up']],
+    'the d-pad release still releases W it held');
+  assert(!padButton('dup').classList.contains('is-pressed') && !leftStick.classList.contains('active'));
+
+  // Leaving gamepad mode while a button is down must not leave it stuck.
+  records.length = 0;
+  padButton('b').emit('pointerdown', {pointerId: 24, button: 0});
+  assert(padButton('b').classList.contains('is-pressed'));
+  elements.mouseModeButton.click();
+  await wait();
+  assert(elements.gamepadPanel.hidden && !elements.mousePanel.hidden);
+  assert(records.some(packet => packet.command === 'MU'), 'leaving gamepad mode queues a release for held keys');
+  assert(!padButton('b').classList.contains('is-pressed'));
 
   const pad = elements.touchpad;
   pad.emit('pointerdown', {pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 100});

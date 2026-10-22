@@ -49,6 +49,30 @@ class MacTests(unittest.TestCase):
     def test_signed_scroll(self):
         self.controller.execute({'command':'S -2'})
         self.assertEqual(-2,Q.CGEventGetIntegerValueField(self.events[0],Q.kCGScrollWheelEventDeltaAxis1))
+    def test_gamepad_hold_posts_one_down_and_one_up(self):
+        self.controller.execute({'key':'space','state':'down'})
+        self.assertEqual([Q.kCGEventKeyDown],[Q.CGEventGetType(e) for e in self.events])
+        self.assertEqual({'space'},self.controller.held_keys)
+        self.controller.execute({'key':'space','state':'up'})
+        self.assertEqual([Q.kCGEventKeyDown,Q.kCGEventKeyUp],[Q.CGEventGetType(e) for e in self.events])
+        self.assertEqual(set(),self.controller.held_keys)
+        self.controller.execute({'key':'space','state':'up'})
+        self.assertEqual(2,len(self.events),'releasing a key twice must not post a second key up')
+    def test_stuck_gamepad_key_is_released_after_the_phone_stops_sending(self):
+        self.controller.execute({'key':'w','state':'down'})
+        self.controller._cancel_hold_timer()
+        self.controller.last_activity=time.monotonic()-6
+        self.controller._hold_expired()
+        self.assertEqual(Q.kCGEventKeyUp,Q.CGEventGetType(self.events[-1]))
+        self.assertEqual(set(),self.controller.held_keys)
+    def test_gamepad_release_frees_every_held_key(self):
+        for name in ('w','d','space'):
+            self.controller.execute({'key':name,'state':'down'})
+        self.events.clear()
+        self.controller.execute({'command':'MU'})
+        self.assertEqual(3,len(self.events))
+        self.assertTrue(all(Q.CGEventGetType(e)==Q.kCGEventKeyUp for e in self.events))
+        self.assertEqual(set(),self.controller.held_keys)
     def test_permission_denial_does_not_post_input(self):
         with patch('ApplicationServices.AXIsProcessTrusted',return_value=False):
             self.assertEqual('PONG',self.controller.execute({'command':'PING'}))

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Phone gamepad mode with switchable Xbox and PlayStation layouts: dual sticks, d-pad, ABXY/△○□✕, shoulders, and View/Menu.
+- Held buttons and sticks keep the mapped key down while pressed, release on lift, and free everything when you leave the mode, hide the page, or the phone stops sending.
+- Portrait phones (up to 560 px wide) lay the gamepad out as a 2×2 pad instead of clipping the right stick and R2 off-screen.
+- Tests cover layout switching, held-key reference counting, stuck-key release, and both receivers' hold/release paths.
+
 ## 2.6 — 2026-10-13
 
 - Red/black phone controls and a responsive Windows QR pairing window.

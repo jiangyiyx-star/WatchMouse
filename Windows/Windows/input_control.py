@@ -50,6 +50,8 @@ class InputController:
             sender = self._native_send
         self.sender, self.lock = sender, threading.RLock()
         self.dragging, self.drag_timer = False, None
+        self.held_keys = set()
+        self.hold_timer = None
         self.last_activity = time.monotonic()
 
     def _native_send(self, items):
@@ -62,16 +64,38 @@ class InputController:
         if items:
             self.sender(list(items))
 
+    def _cancel_hold_timer(self):
+        if self.hold_timer:
+            self.hold_timer.cancel()
+            self.hold_timer = None
+
+    def _schedule_hold_watchdog(self):
+        self._cancel_hold_timer()
+        if not self.held_keys and not self.dragging:
+            return
+        self.hold_timer = threading.Timer(5, self._hold_expired)
+        self.hold_timer.daemon = True
+        self.hold_timer.start()
+
     def release_all(self):
         with self.lock:
             if self.drag_timer:
                 self.drag_timer.cancel()
                 self.drag_timer = None
+            self._cancel_hold_timer()
             if self.dragging:
                 try:
                     self.send(mouse(flags=0x0004))
                 finally:
                     self.dragging = False
+            held = sorted(self.held_keys)
+            self.held_keys.clear()
+            for name in held:
+                extended = 1 if name in EXTENDED else 0
+                try:
+                    self.send(key(VK[name], flags=extended | 2))
+                except OSError:
+                    pass
 
     def _drag_expired(self):
         with self.lock:
@@ -84,6 +108,18 @@ class InputController:
                 self.drag_timer = threading.Timer(remaining, self._drag_expired)
                 self.drag_timer.daemon = True
                 self.drag_timer.start()
+
+    def _hold_expired(self):
+        with self.lock:
+            if not self.held_keys:
+                return
+            remaining = 5 - (time.monotonic() - self.last_activity)
+            if remaining <= 0:
+                self.release_all()
+            else:
+                self.hold_timer = threading.Timer(remaining, self._hold_expired)
+                self.hold_timer.daemon = True
+                self.hold_timer.start()
 
     def command(self, command):
         if not isinstance(command, str):
@@ -123,14 +159,32 @@ class InputController:
             raise ValueError("未知指令")
         return "OK"
 
-    def press_key(self, name, modifiers):
+    def press_key(self, name, modifiers, state="tap"):
         if not isinstance(name, str) or name.lower() not in VK:
             raise ValueError("不支持的按键")
+        if state not in ("tap", "down", "up"):
+            raise ValueError("无效按键状态")
         if not isinstance(modifiers, list) or len(modifiers) > 4 or any(not isinstance(mod, str) or mod not in MODIFIERS for mod in modifiers):
             raise ValueError("无效组合键")
+        if state != "tap" and modifiers:
+            raise ValueError("按住/松开不支持组合键")
         name, held = name.lower(), list(dict.fromkeys(modifiers))
-        items = [key(MODIFIERS[mod], flags=1 if mod == "win" else 0) for mod in held]
         extended = 1 if name in EXTENDED else 0
+        if state == "down":
+            if name in self.held_keys:
+                return
+            self.send(key(VK[name], flags=extended))
+            self.held_keys.add(name)
+            self._schedule_hold_watchdog()
+            return
+        if state == "up":
+            if name not in self.held_keys:
+                return
+            self.send(key(VK[name], flags=extended | 2))
+            self.held_keys.discard(name)
+            self._schedule_hold_watchdog()
+            return
+        items = [key(MODIFIERS[mod], flags=1 if mod == "win" else 0) for mod in held]
         items.extend([key(VK[name], flags=extended), key(VK[name], flags=extended | 2)])
         items.extend(key(MODIFIERS[mod], flags=2 | (1 if mod == "win" else 0)) for mod in reversed(held))
         try:
@@ -168,5 +222,7 @@ class InputController:
             if "text" in payload:
                 self.type_text(payload["text"])
             else:
-                self.press_key(payload["key"], payload.get("modifiers", []))
+                self.press_key(payload["key"], payload.get("modifiers", []), payload.get("state", "tap"))
+            if self.held_keys or self.dragging:
+                self._schedule_hold_watchdog()
             return "OK"

@@ -79,10 +79,91 @@ textarea:focus { outline: none; }
 
 .bottom-bar { position: relative; flex: none; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .footer-controls { display: flex; gap: 8px; align-items: center; min-width: 0; max-width: 560px; width: 100%; align-self: center; }
-.mode-switcher { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 3px; flex: 1; min-width: 0; padding: 4px; border: 1px solid #2d303a; border-radius: 22px; background: #1b1d25; }
-.mode-switcher button { display: flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; height: 46px; min-height: 44px; border-radius: 17px; padding: 7px 3px; font-size: 12px; color: #9399ad; }
-.mode-switcher button .icon { width: 19px; height: 19px; }
+.mode-switcher { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 3px; flex: 1; min-width: 0; padding: 4px; border: 1px solid #2d303a; border-radius: 22px; background: #1b1d25; }
+.mode-switcher button { display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 0; height: 46px; min-height: 44px; border-radius: 17px; padding: 7px 2px; font-size: 11px; color: #9399ad; }
+.mode-switcher button .icon { width: 18px; height: 18px; }
 .mode-switcher button[aria-pressed=true] { background: var(--accent); color: #ffffff; box-shadow: 0 2px 8px #0003; font-weight: 600; }
+
+.gamepad-panel {
+  display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; height: 100%;
+  border: 1px solid var(--line); border-radius: 28px; background: var(--surface); overflow: hidden;
+  padding: 10px 10px 12px; box-shadow: 0 2px 0 #0005, inset 0 1px 0 #ffffff04;
+}
+.gamepad-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.layout-switcher { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; min-width: min(100%, 220px); padding: 3px; border: 1px solid #2d303a; border-radius: 14px; background: #15171e; }
+.layout-switcher button { min-height: 34px; border-radius: 11px; font-size: 12px; color: #9399ad; }
+.layout-switcher button[aria-pressed=true] { background: #2a2e3a; color: #fff; font-weight: 600; }
+.gamepad-hint { margin: 0; font-size: 11px; color: #7f8598; line-height: 1.35; max-width: 42%; text-align: right; }
+.gamepad-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.gamepad-shoulders { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 6px; }
+.shoulder, .meta-button { min-height: 40px; border-radius: 12px; border: 1px solid #303440; background: #252832; color: #c4c8d6; font-size: 12px; font-weight: 600; }
+.shoulder:active, .meta-button:active, .shoulder.is-pressed, .meta-button.is-pressed,
+.dpad button.is-pressed, .face-buttons button.is-pressed { background: #3b2330; color: var(--highlight); border-color: #8b3649; }
+.gamepad-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; max-width: 280px; width: 100%; margin: 0 auto; }
+.gamepad-controls {
+  flex: 1; min-height: 180px; display: grid;
+  grid-template-columns: minmax(96px,1fr) minmax(96px,1fr) minmax(110px,1.05fr) minmax(96px,1fr);
+  grid-template-areas: "lstick dpad face rstick";
+  gap: 8px; align-items: center;
+}
+.stick[data-stick=left] { grid-area: lstick; }
+.dpad { grid-area: dpad; }
+.face-buttons { grid-area: face; }
+.stick[data-stick=right] { grid-area: rstick; }
+.stick {
+  position: relative; aspect-ratio: 1; width: min(100%, 120px); margin: 0 auto;
+  border-radius: 50%; background: #12141b; border: 1px solid #2c303c;
+  touch-action: none; -webkit-user-select: none; user-select: none;
+}
+.stick-knob {
+  position: absolute; left: 50%; top: 50%; width: 42%; height: 42%; border-radius: 50%;
+  transform: translate(-50%,-50%); background: radial-gradient(circle at 35% 30%, #3a3f4d, #1d2029);
+  border: 1px solid #4a5163; box-shadow: 0 4px 10px #0006; pointer-events: none;
+}
+.stick.active .stick-knob { border-color: #8b3649; background: radial-gradient(circle at 35% 30%, #5a3140, #2a1820); }
+.dpad, .face-buttons {
+  position: relative; width: min(100%, 128px); aspect-ratio: 1; margin: 0 auto;
+}
+.dpad button, .face-buttons button {
+  position: absolute; width: 36%; height: 36%; border-radius: 12px; display: grid; place-items: center;
+  border: 1px solid #303440; background: #252832; color: #d0d4e0; font-size: 13px; font-weight: 700;
+}
+.dpad-up, .face-y { left: 32%; top: 2%; }
+.dpad-left, .face-x { left: 2%; top: 32%; }
+.dpad-right, .face-b { right: 2%; top: 32%; }
+.dpad-down, .face-a { left: 32%; bottom: 2%; }
+.face-a { background: #1f3d2c; border-color: #2f6b48; color: #7dcea0; }
+.face-b { background: #3a2226; border-color: #8b3649; color: #ff8ea3; }
+.face-x { background: #1f2f45; border-color: #3b6ea5; color: #8eb7ef; }
+.face-y { background: #3a3520; border-color: #8a7a35; color: #e6d56a; }
+.gamepad-panel[data-layout=xbox] .ps-label { display: none; }
+.gamepad-panel[data-layout=ps] .xbox-label { display: none; }
+.gamepad-panel[data-layout=ps] .face-a { background: #1f2f45; border-color: #3b6ea5; color: #9ec0ef; }
+.gamepad-panel[data-layout=ps] .face-b { background: #3a2226; border-color: #8b3649; color: #ff8ea3; }
+.gamepad-panel[data-layout=ps] .face-x { background: #2b2540; border-color: #6d5bb3; color: #c2b4ff; }
+.gamepad-panel[data-layout=ps] .face-y { background: #1f3d2c; border-color: #2f6b48; color: #7dcea0; }
+@media (max-width:560px) and (orientation:portrait) {
+  .gamepad-hint { max-width: 100%; text-align: left; }
+  .gamepad-controls {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas: "lstick face" "dpad rstick";
+    min-height: 220px;
+  }
+}
+@media (max-width:350px) {
+  .mode-switcher button span { display: none; }
+  .mode-switcher button { gap: 0; }
+  .gamepad-hint { display: none; }
+  .gamepad-controls {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas: "lstick face" "dpad rstick";
+    min-height: 220px;
+  }
+}
+@media (orientation:landscape) and (min-width:560px) {
+  .gamepad-hint { max-width: none; }
+  .gamepad-controls { min-height: 0; }
+}
 .status-button { display: grid; place-items: center; width: 44px; min-width: 44px; height: 48px; border: 1px solid transparent; border-radius: 18px; flex: none; }
 .status-button[aria-expanded=true] { background: #252832; border-color: var(--line); }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #717789; box-shadow: 0 0 0 4px #7177890c; }

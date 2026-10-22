@@ -8,8 +8,10 @@
   const messages = {
     en: {
       watch: 'Watch ↗', left: 'Left', drag: 'Drag', right: 'Right', connect: 'Connect', speed: 'Speed',
-      video: 'Video', mouse: 'Mouse', keyboard: 'Keyboard', language: 'Language', interfaceLanguage: 'Interface language',
+      video: 'Video', mouse: 'Mouse', gamepad: 'Pad', keyboard: 'Keyboard', language: 'Language', interfaceLanguage: 'Interface language',
       videoControls: 'Video controls', previousVideo: 'Previous video', playPause: 'Play or pause', nextVideo: 'Next video',
+      gamepadControls: 'Gamepad controls', gamepadLayout: 'Gamepad layout', gamepadHint: 'Buttons map to keyboard keys for games that support them',
+      leftStick: 'Left stick', rightStick: 'Right stick', dpad: 'D-pad', faceButtons: 'Face buttons',
       mouseControls: 'Mouse controls', touchpad: 'Touchpad: move with one finger, tap to click, scroll with two fingers',
       leftClick: 'Left click', rightClick: 'Right click', dragOff: 'Drag: hold the left mouse button',
       dragOn: 'Drag active: release the left mouse button', scroll: 'Scroll', scrollUp: 'Scroll up', scrollDown: 'Scroll down',
@@ -34,8 +36,10 @@
     },
     zh: {
       watch: '手表 ↗', left: '左键', drag: '拖动', right: '右键', connect: '连接', speed: '速度',
-      video: '抖音', mouse: '鼠标', keyboard: '键鼠', language: '语言', interfaceLanguage: '界面语言',
+      video: '抖音', mouse: '鼠标', gamepad: '手柄', keyboard: '键鼠', language: '语言', interfaceLanguage: '界面语言',
       videoControls: '视频遥控', previousVideo: '上一个视频', playPause: '播放或暂停', nextVideo: '下一个视频',
+      gamepadControls: '手柄控制', gamepadLayout: '手柄布局', gamepadHint: '按键映射为键盘，适合支持键鼠的游戏',
+      leftStick: '左摇杆', rightStick: '右摇杆', dpad: '方向键', faceButtons: '功能键',
       mouseControls: '鼠标控制', touchpad: '触控板：单指移动，轻点单击，双指滚动', leftClick: '鼠标左键', rightClick: '鼠标右键',
       dragOff: '拖动，点击按住左键', dragOn: '拖动已开启，点击松开左键', scroll: '滚轮', scrollUp: '向上滚动', scrollDown: '向下滚动',
       scrollSurface: '单指上下滑动滚动页面', phoneInput: '手机输入', type: '输入…', draft: '输入草稿',
@@ -298,7 +302,7 @@
     }
     // Bound discrete actions under a slow connection. Never silently drop an
     // accepted click/text action, and never let this limit block mouse-up.
-    if (item.kind === 'command' && item.payload.command !== 'MU' && queue.filter(entry => entry.kind === 'command').length >= 32) {
+    if (item.kind === 'command' && item.payload.command !== 'MU' && !item.safeRelease && queue.filter(entry => entry.kind === 'command' && !entry.safeRelease).length >= 32) {
       if (item.reject) item.reject(localError('queueBusy'));
       feedback('queueBusy', true);
       return;
@@ -316,7 +320,7 @@
     if (inFlightCommand === 'MU' && inFlightToken === releaseToken) return;
     const existing = queue.find(item => item.kind === 'command' && item.payload.command === 'MU' && item.token === releaseToken);
     if (existing) { existing.safeRelease = true; return; }
-    // Mouse-up is the only operation allowed after a disconnect. Retain its
+    // Mouse-up / held-key release is allowed after a disconnect. Retain its
     // original token and order behind an in-flight MD; never re-send any input.
     queue.push({kind: 'command', payload: {command: 'MU'}, token: releaseToken, safeRelease: true});
     drain();
@@ -546,16 +550,157 @@
   scrollSurface.addEventListener('lostpointercapture', event => { if (railPointer && railPointer.id === event.pointerId) clearRailGesture(); });
   scrollSurface.addEventListener('contextmenu', event => event.preventDefault());
 
+  const PAD_KEYS = {
+    lt: '1', lb: 'q', rb: 'r', rt: '2', select: 'tab', start: 'enter',
+    a: 'space', b: 'escape', x: 'f', y: 'e',
+    dup: 'w', ddown: 's', dleft: 'a', dright: 'd'
+  };
+  const STICK_KEYS = {
+    left: {up: 'w', down: 's', left: 'a', right: 'd'},
+    right: {up: 'up', down: 'down', left: 'left', right: 'right'}
+  };
+  const heldPadKeys = new Map();
+  const stickPointers = new Map();
+  const stickHeld = {left: new Set(), right: new Set()};
+  let gamepadLayout = storage.get('watchmouse_pad_layout') === 'ps' ? 'ps' : 'xbox';
+
+  function holdPadKey(name) {
+    const count = heldPadKeys.get(name) || 0;
+    heldPadKeys.set(name, count + 1);
+    if (!count) sendQuietly({key: name, state: 'down'});
+  }
+  function releasePadKey(name) {
+    const count = heldPadKeys.get(name) || 0;
+    if (count <= 1) {
+      heldPadKeys.delete(name);
+      if (count === 1) sendQuietly({key: name, state: 'up'});
+      return;
+    }
+    heldPadKeys.set(name, count - 1);
+  }
+  function syncStickKeys(side, nextKeys) {
+    const previous = stickHeld[side];
+    for (const name of previous) if (!nextKeys.has(name)) releasePadKey(name);
+    for (const name of nextKeys) if (!previous.has(name)) holdPadKey(name);
+    stickHeld[side] = nextKeys;
+  }
+  function keysFromStick(side, nx, ny) {
+    const map = STICK_KEYS[side];
+    const next = new Set();
+    const dead = 0.32;
+    if (ny <= -dead) next.add(map.up);
+    if (ny >= dead) next.add(map.down);
+    if (nx <= -dead) next.add(map.left);
+    if (nx >= dead) next.add(map.right);
+    return next;
+  }
+  function resetStickVisual(stick) {
+    const knob = stick.querySelector('.stick-knob');
+    if (knob) knob.style.transform = 'translate(-50%, -50%)';
+    stick.classList.remove('active');
+  }
+  function clearGamepadUi() {
+    document.querySelectorAll('#gamepadPanel .is-pressed').forEach(button => button.classList.remove('is-pressed'));
+    document.querySelectorAll('#gamepadPanel .stick').forEach(resetStickVisual);
+  }
+  function releaseGamepadControls(sendServer = true) {
+    const hadKeys = heldPadKeys.size > 0;
+    heldPadKeys.clear();
+    stickHeld.left = new Set();
+    stickHeld.right = new Set();
+    for (const [pointerId, state] of stickPointers) {
+      if (state.stick.hasPointerCapture(pointerId)) state.stick.releasePointerCapture(pointerId);
+    }
+    stickPointers.clear();
+    clearGamepadUi();
+    if (hadKeys && sendServer) enqueueRelease();
+  }
+  function setGamepadLayout(layout) {
+    gamepadLayout = layout === 'ps' ? 'ps' : 'xbox';
+    storage.set('watchmouse_pad_layout', gamepadLayout);
+    $('gamepadPanel').dataset.layout = gamepadLayout;
+    $('xboxLayoutButton').setAttribute('aria-pressed', String(gamepadLayout === 'xbox'));
+    $('psLayoutButton').setAttribute('aria-pressed', String(gamepadLayout === 'ps'));
+  }
+  setGamepadLayout(gamepadLayout);
+  document.querySelectorAll('[data-layout]').forEach(button => {
+    if (!button.closest('.layout-switcher')) return;
+    button.addEventListener('click', () => setGamepadLayout(button.dataset.layout));
+  });
+  document.querySelectorAll('#gamepadPanel [data-pad]').forEach(button => {
+    const bind = event => {
+      if (event.button !== undefined && event.button !== 0) return;
+      event.preventDefault();
+      const name = PAD_KEYS[button.dataset.pad];
+      if (!name || button.classList.contains('is-pressed')) return;
+      button.classList.add('is-pressed');
+      try { button.setPointerCapture(event.pointerId); } catch (_) {}
+      holdPadKey(name);
+    };
+    const unbind = event => {
+      if (!button.classList.contains('is-pressed')) return;
+      button.classList.remove('is-pressed');
+      const name = PAD_KEYS[button.dataset.pad];
+      if (name) releasePadKey(name);
+      try { if (button.hasPointerCapture(event.pointerId)) button.releasePointerCapture(event.pointerId); } catch (_) {}
+    };
+    button.addEventListener('pointerdown', bind);
+    button.addEventListener('pointerup', unbind);
+    button.addEventListener('pointercancel', unbind);
+    button.addEventListener('lostpointercapture', unbind);
+    button.addEventListener('contextmenu', event => event.preventDefault());
+  });
+  document.querySelectorAll('#gamepadPanel .stick').forEach(stick => {
+    const side = stick.dataset.stick;
+    const knob = stick.querySelector('.stick-knob');
+    stick.addEventListener('pointerdown', event => {
+      if (event.button !== undefined && event.button !== 0) return;
+      event.preventDefault();
+      stickPointers.set(event.pointerId, {stick, side});
+      stick.setPointerCapture(event.pointerId);
+      stick.classList.add('active');
+      moveStick(event);
+    });
+    function moveStick(event) {
+      if (!stickPointers.has(event.pointerId)) return;
+      const rect = stick.getBoundingClientRect();
+      const radius = Math.min(rect.width, rect.height) / 2;
+      let nx = (event.clientX - (rect.left + radius)) / radius;
+      let ny = (event.clientY - (rect.top + radius)) / radius;
+      const magnitude = Math.hypot(nx, ny);
+      if (magnitude > 1) { nx /= magnitude; ny /= magnitude; }
+      if (knob) knob.style.transform = 'translate(calc(-50% + ' + (nx * 28) + '%), calc(-50% + ' + (ny * 28) + '%))';
+      syncStickKeys(side, keysFromStick(side, nx, ny));
+    }
+    function endStick(event) {
+      if (!stickPointers.has(event.pointerId)) return;
+      stickPointers.delete(event.pointerId);
+      syncStickKeys(side, new Set());
+      resetStickVisual(stick);
+      try { if (stick.hasPointerCapture(event.pointerId)) stick.releasePointerCapture(event.pointerId); } catch (_) {}
+    }
+    stick.addEventListener('pointermove', moveStick);
+    stick.addEventListener('pointerup', endStick);
+    stick.addEventListener('pointercancel', endStick);
+    stick.addEventListener('lostpointercapture', endStick);
+    stick.addEventListener('contextmenu', event => event.preventDefault());
+  });
+  document.querySelectorAll('#gamepadPanel button, #gamepadPanel .stick').forEach(node => {
+    node.addEventListener('pointerdown', event => event.preventDefault());
+  });
+
   function setMode(nextMode, focusInput = false) {
-    if (!['douyin', 'mouse', 'keyboard'].includes(nextMode)) nextMode = 'mouse';
+    if (!['douyin', 'mouse', 'keyboard', 'gamepad'].includes(nextMode)) nextMode = 'mouse';
     if (mode && mode !== nextMode) releaseDragOnLeave();
     mode = nextMode;
     storage.set('watchmouse_mode', mode);
     $('douyinPanel').hidden = mode !== 'douyin';
-    $('mousePanel').hidden = mode === 'douyin';
+    $('gamepadPanel').hidden = mode !== 'gamepad';
+    $('mousePanel').hidden = mode === 'douyin' || mode === 'gamepad';
     $('keyboardPanel').hidden = mode !== 'keyboard';
     document.body.classList.toggle('keyboard-visible', mode === 'keyboard');
     document.body.classList.toggle('mode-douyin', mode === 'douyin');
+    document.body.classList.toggle('mode-gamepad', mode === 'gamepad');
     document.querySelectorAll('[data-mode]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.mode === mode)));
     if (connected) feedback();
     if (mode !== 'keyboard') { $('textInput').blur(); if (speechListening && speech) speech.stop(); }
@@ -658,14 +803,19 @@
   function releaseDragOnLeave() {
     // Best-effort release before the browser suspends the page. The receiver
     // also releases a held button when its session times out.
-    if (dragActive || dragMayBeHeld) {
+    const hadPadKeys = heldPadKeys.size > 0;
+    if (dragActive || dragMayBeHeld || hadPadKeys) {
       flushMotion();
       // Keep an ordered release in the queue as well, so an in-flight MD
       // cannot leave the button held after the best-effort beacon arrives.
+      // MU also clears any held keyboard keys used by the gamepad mode.
+      releaseGamepadControls(false);
       enqueueRelease();
       releaseBeacon();
       dragActive = false;
       updateDragUI();
+    } else {
+      releaseGamepadControls(false);
     }
     if (motionTimer) { clearTimeout(motionTimer); motionTimer = null; }
     pendingX = pendingY = pendingScroll = pendingRailScroll = 0;

@@ -31,6 +31,34 @@ class InputController(BaseController):
         if error:
             raise OSError(error)
 
+    def release_all(self):
+        with self.lock:
+            if self.drag_timer:
+                self.drag_timer.cancel()
+                self.drag_timer = None
+            self._cancel_hold_timer()
+            if self.dragging:
+                try:
+                    from input_control import mouse
+                    self.send(mouse(flags=0x0004))
+                finally:
+                    self.dragging = False
+            held = sorted(self.held_keys)
+            self.held_keys.clear()
+            if not held:
+                return
+            try:
+                self._check()
+            except OSError:
+                return
+            for name in held:
+                event = self.q.CGEventCreateKeyboardEvent(None, KEYS[name], False)
+                self.q.CGEventSetFlags(event, 0)
+                try:
+                    self._post(event)
+                except OSError:
+                    pass
+
     def _post(self, event):
         if event is None:
             raise OSError('macOS 无法创建输入事件')
@@ -64,13 +92,38 @@ class InputController(BaseController):
                 event = q.CGEventCreateMouseEvent(None, kind, location, button)
             self._post(event)
 
-    def press_key(self, name, modifiers):
+    def press_key(self, name, modifiers, state='tap'):
         # Validate before checking permission or creating any events.
         if not isinstance(name, str) or name.lower() not in KEYS:
             raise ValueError('不支持的按键')
+        if state not in ('tap', 'down', 'up'):
+            raise ValueError('无效按键状态')
         if not isinstance(modifiers, list) or len(modifiers) > 4 or any(
                 not isinstance(mod, str) or mod not in ('ctrl','shift','alt','win','cmd','control') for mod in modifiers):
             raise ValueError('无效组合键')
+        if state != 'tap' and modifiers:
+            raise ValueError('按住/松开不支持组合键')
+        name = name.lower()
+        if state == 'down':
+            if name in self.held_keys:
+                return
+            self._check()
+            event = self.q.CGEventCreateKeyboardEvent(None, KEYS[name], True)
+            self.q.CGEventSetFlags(event, 0)
+            self._post(event)
+            self.held_keys.add(name)
+            self._schedule_hold_watchdog()
+            return
+        if state == 'up':
+            if name not in self.held_keys:
+                return
+            self._check()
+            event = self.q.CGEventCreateKeyboardEvent(None, KEYS[name], False)
+            self.q.CGEventSetFlags(event, 0)
+            self._post(event)
+            self.held_keys.discard(name)
+            self._schedule_hold_watchdog()
+            return
         self._check()
         q = self.q
         # Existing phone Ctrl shortcuts mean Command on Mac; control is literal Ctrl.
@@ -81,7 +134,7 @@ class InputController(BaseController):
         for mod in set(modifiers):
             flags |= masks[mod]
         for down in (True, False):
-            event = q.CGEventCreateKeyboardEvent(None, KEYS[name.lower()], down)
+            event = q.CGEventCreateKeyboardEvent(None, KEYS[name], down)
             q.CGEventSetFlags(event, flags)
             self._post(event)
 

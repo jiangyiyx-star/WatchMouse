@@ -138,6 +138,26 @@ body.pad-immersive .pad-fullscreen .compress-icon { display: block; }
 .face-b { background: #3a2226; border-color: #8b3649; color: #ff8ea3; }
 .face-x { background: #1f2f45; border-color: #3b6ea5; color: #8eb7ef; }
 .face-y { background: #3a3520; border-color: #8a7a35; color: #e6d56a; }
+/* Trackpad in the seam between the grips: cursor control without leaving the
+   controller layout. Drag moves, a tap clicks, holding still right-clicks. */
+.connection-note { margin: 0; padding: 0 2px; font-size: 11px; line-height: 1.45; color: #8b91a4; }
+
+.pad-trackpad {
+  position: absolute; left: 50%; bottom: 2%; transform: translateX(-50%);
+  width: min(36%, 250px); height: clamp(78px, 24vmin, 124px);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  border: 1px dashed #343948; border-radius: 16px;
+  background: radial-gradient(circle at 50% 38%, #191c24, #12141a);
+  color: #838a9e; touch-action: none; -webkit-user-select: none; user-select: none;
+  transition: border-color .14s, background .14s, color .14s;
+}
+.pad-trackpad.active { border-color: #8b3649; background: radial-gradient(circle at 50% 38%, #241a20, #151116); color: #e0aab6; }
+.pad-trackpad-label { font-size: clamp(10px, 1.5vmin, 12px); font-weight: 700; letter-spacing: .04em; pointer-events: none; }
+.pad-trackpad-hint { font-size: clamp(8px, 1.15vmin, 10px); color: #6a7082; text-align: center; line-height: 1.2; padding: 0 6px; pointer-events: none; }
+.pad-trackpad.active .pad-trackpad-hint { color: #b08a92; }
+.pad-trackpad-knob { position: absolute; width: 22px; height: 22px; border-radius: 50%; border: 1px solid #4a5163; background: #2b303c; opacity: 0; pointer-events: none; transition: transform .08s linear, opacity .12s; }
+.pad-trackpad.active .pad-trackpad-knob { opacity: .8; border-color: #b64b62; background: #5a3140; }
+
 .pad-meta { position: absolute; left: 50%; top: 6px; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; }
 .meta-button { min-height: 32px; min-width: 54px; padding: 0 10px; border-radius: 10px; border: 1px solid #303440; background: #1e212a; color: #a9aec0; font-size: 11px; font-weight: 600; white-space: nowrap; }
 .pad-rotate-hint { display: none; margin: 0; font-size: 10px; color: #6f7488; white-space: nowrap; }
@@ -159,6 +179,9 @@ body.pad-immersive .pad-fullscreen .compress-icon { display: block; }
   .stick { width: clamp(88px, 26vmin, 118px); }
   .dpad, .face-buttons { width: clamp(112px, 33vmin, 150px); }
   .shoulder { min-height: 46px; }
+  /* Portrait has no seam between the grips, so the trackpad lives in the open
+     space above the thumbs. */
+  .pad-trackpad { top: 24%; bottom: auto; width: min(74%, 280px); height: clamp(94px, 15vh, 148px); }
 }
 @media (max-width: 350px) {
   .layout-switcher button { padding: 0 8px; font-size: 11px; }

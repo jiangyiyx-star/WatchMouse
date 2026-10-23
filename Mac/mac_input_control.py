@@ -13,6 +13,8 @@ KEYS = {
     'f8':100,'f9':101,'f10':109,'f11':103,'f12':111}
 
 class InputController(BaseController):
+    KEYBOARD_MODE = "quartz"
+
     def __init__(self, quartz=None):
         if quartz is None:
             import Quartz as quartz

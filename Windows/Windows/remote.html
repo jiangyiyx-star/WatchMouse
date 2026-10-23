@@ -83,6 +83,11 @@
             </div>
             <div class="stick" data-stick="right" aria-label="右摇杆" data-i18n-aria="rightStick"><span class="stick-ring" aria-hidden="true"></span><span class="stick-knob"></span></div>
           </div>
+          <div id="padTrackpad" class="pad-trackpad" role="group" aria-label="触控板：拖动移动鼠标，轻点左键，长按右键" data-i18n-aria="padTrackpad">
+            <span class="pad-trackpad-knob" aria-hidden="true"></span>
+            <span class="pad-trackpad-label" data-i18n="padTrackpadLabel">触控板</span>
+            <span class="pad-trackpad-hint" data-i18n="padTrackpadHint">拖动移动 · 轻点左键 · 长按右键</span>
+          </div>
         </div>
       </section>
       <section id="mousePanel" class="mouse-controller" aria-label="鼠标控制" data-i18n-aria="mouseControls">
@@ -125,6 +130,7 @@
         <div class="pairing-row"><input id="pairingCode" type="password" placeholder="配对码" data-i18n-placeholder="pairingCode" aria-label="配对码" data-i18n-aria="pairingCode" autocomplete="off" autocapitalize="off" spellcheck="false"><button id="pairButton" class="accent-button" type="button" data-i18n="connect">连接</button></div>
         <label class="speed-setting"><span data-i18n="speed">速度</span><input id="sensitivity" type="range" min="0.5" max="3" step="0.1" value="1.4" aria-label="鼠标移动速度" data-i18n-aria="mouseSpeed"></label>
         <label class="language-setting"><span data-i18n="language">Language</span><select id="languageSelect" aria-label="Interface language" data-i18n-aria="interfaceLanguage"><option value="en">English</option><option value="zh">中文</option></select></label>
+        <p id="inputModeNote" class="connection-note" hidden></p>
         <div id="connectionMessage" class="connection-message" role="status"></div>
       </section>
       <div id="actionFeedback" class="visually-hidden" role="status" aria-live="polite"></div>

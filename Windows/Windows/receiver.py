@@ -14,7 +14,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
-from input_control import InputController
+from input_control import InputController, elevated
 import pad_control
 
 PORT, VERSION = 53514, "2.6"
@@ -351,6 +351,8 @@ class Handler(BaseHTTPRequestHandler):
                              "nativeGamepad": bool(getattr(self.server.pad, "available", False)),
                              "padBackend": "vigem" if getattr(self.server.pad, "available", False) else "keyboard",
                              "padError": (getattr(self.server.pad, "error", "") if paired else ""),
+                             "elevated": elevated() if sys.platform == "win32" else None,
+                             "keyboardMode": getattr(self.server.controller, "KEYBOARD_MODE", "virtual-key"),
                              "features": ["mouse", "keyboard", "unicode", "watch", "gamepad", "gamepad.native"]})
         elif url.path == "/c":
             command = query.get("q", [""])[0]
@@ -503,6 +505,8 @@ def main():
     server = create_server(port=args.port)
     print("手机打开：http://" + local_ip() + ":" + str(server.server_port) + "/?token=" + server.token)
     print("手表使用上述地址的 /watch 页面。Ctrl+C 退出。")
+    if sys.platform == "win32" and not elevated():
+        print("提示：游戏若以管理员身份运行，按键会被系统拦截；请右键以管理员身份重新打开本程序。")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

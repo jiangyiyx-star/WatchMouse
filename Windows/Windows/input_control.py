@@ -29,6 +29,36 @@ VK.update({"f" + str(num): 0x6F + num for num in range(1, 13)})
 MODIFIERS = {"ctrl": 0x11, "shift": 0x10, "alt": 0x12, "win": 0x5B}
 EXTENDED = {"pageup", "pagedown", "end", "home", "left", "up", "right", "down", "insert", "delete", "win"}
 
+# Real keyboards report scancodes; games that read DirectInput or Raw Input
+# ignore synthetic events that only carry a virtual key. Send scancodes first
+# and fall back to the virtual key when the layout has no mapping for it.
+KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP = 0x0001, 0x0002
+KEYEVENTF_SCANCODE = 0x0008
+SCAN = {
+    "escape": 0x01, "esc": 0x01, "1": 0x02, "2": 0x03, "3": 0x04, "4": 0x05,
+    "5": 0x06, "6": 0x07, "7": 0x08, "8": 0x09, "9": 0x0A, "0": 0x0B,
+    "backspace": 0x0E, "tab": 0x0F, "q": 0x10, "w": 0x11, "e": 0x12, "r": 0x13,
+    "t": 0x14, "y": 0x15, "u": 0x16, "i": 0x17, "o": 0x18, "p": 0x19,
+    "enter": 0x1C, "ctrl": 0x1D, "a": 0x1E, "s": 0x1F, "d": 0x20, "f": 0x21,
+    "g": 0x22, "h": 0x23, "j": 0x24, "k": 0x25, "l": 0x26, "shift": 0x2A,
+    "z": 0x2C, "x": 0x2D, "c": 0x2E, "v": 0x2F, "b": 0x30, "n": 0x31,
+    "m": 0x32, "alt": 0x38, "space": 0x39, "f1": 0x3B, "f2": 0x3C,
+    "f3": 0x3D, "f4": 0x3E, "f5": 0x3F, "f6": 0x40, "f7": 0x41, "f8": 0x42,
+    "f9": 0x43, "f10": 0x44, "home": 0x47, "up": 0x48, "pageup": 0x49,
+    "left": 0x4B, "right": 0x4D, "end": 0x4F, "down": 0x50, "pagedown": 0x51,
+    "insert": 0x52, "delete": 0x53, "f11": 0x57, "f12": 0x58, "win": 0x5B,
+}
+
+
+def elevated():
+    """True when this process can drive elevated windows (games launched by Steam)."""
+    if sys.platform != "win32":
+        return False
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
 def mouse(dx=0, dy=0, data=0, flags=0):
     item = INPUT(type=0)
     item.mi = MOUSEINPUT(dx, dy, data & 0xFFFFFFFF, flags, 0, 0)
@@ -40,7 +70,13 @@ def key(vk=0, scan=0, flags=0):
     return item
 
 class InputController:
+    # How this platform hands keys to the desktop; reported to the phone so the
+    # settings panel can explain game compatibility.
+    KEYBOARD_MODE = "scancode"
+
     def __init__(self, sender=None):
+        self.user32 = None
+        self._scans = {}
         if sender is None:
             if sys.platform != "win32":
                 raise OSError("接收器只能在 Windows 运行")
@@ -91,9 +127,8 @@ class InputController:
             held = sorted(self.held_keys)
             self.held_keys.clear()
             for name in held:
-                extended = 1 if name in EXTENDED else 0
                 try:
-                    self.send(key(VK[name], flags=extended | 2))
+                    self.send(self._key_event(name, up=True))
                 except OSError:
                     pass
 
@@ -159,6 +194,32 @@ class InputController:
             raise ValueError("未知指令")
         return "OK"
 
+    def _scan_code(self, name):
+        """Hardware scancode for a key name, or 0 when the layout has none."""
+        if name in self._scans:
+            return self._scans[name]
+        code = 0
+        if self.user32 is not None:
+            try:
+                code = int(self.user32.MapVirtualKeyW(VK[name], 0))
+            except Exception:
+                code = 0
+        if not code:
+            code = SCAN.get(name, 0)
+        self._scans[name] = code
+        return code
+
+    def _key_event(self, name, up=False):
+        """Keyboard event that games accept: scancode first, virtual key as fallback."""
+        flags = KEYEVENTF_EXTENDEDKEY if name in EXTENDED else 0
+        scan = self._scan_code(name)
+        if scan:
+            flags |= KEYEVENTF_SCANCODE
+            if up:
+                flags |= KEYEVENTF_KEYUP
+            return key(scan=scan, flags=flags)
+        return key(VK[name], flags=flags | (KEYEVENTF_KEYUP if up else 0))
+
     def press_key(self, name, modifiers, state="tap"):
         if not isinstance(name, str) or name.lower() not in VK:
             raise ValueError("不支持的按键")
@@ -169,28 +230,27 @@ class InputController:
         if state != "tap" and modifiers:
             raise ValueError("按住/松开不支持组合键")
         name, held = name.lower(), list(dict.fromkeys(modifiers))
-        extended = 1 if name in EXTENDED else 0
         if state == "down":
             if name in self.held_keys:
                 return
-            self.send(key(VK[name], flags=extended))
+            self.send(self._key_event(name))
             self.held_keys.add(name)
             self._schedule_hold_watchdog()
             return
         if state == "up":
             if name not in self.held_keys:
                 return
-            self.send(key(VK[name], flags=extended | 2))
+            self.send(self._key_event(name, up=True))
             self.held_keys.discard(name)
             self._schedule_hold_watchdog()
             return
-        items = [key(MODIFIERS[mod], flags=1 if mod == "win" else 0) for mod in held]
-        items.extend([key(VK[name], flags=extended), key(VK[name], flags=extended | 2)])
-        items.extend(key(MODIFIERS[mod], flags=2 | (1 if mod == "win" else 0)) for mod in reversed(held))
+        items = [self._key_event(mod) for mod in held]
+        items.extend([self._key_event(name), self._key_event(name, up=True)])
+        items.extend(self._key_event(mod, up=True) for mod in reversed(held))
         try:
             self.send(*items)
         except OSError:
-            self.send(key(VK[name], flags=extended | 2), *(key(MODIFIERS[mod], flags=2 | (1 if mod == "win" else 0)) for mod in reversed(held)))
+            self.send(self._key_event(name, up=True), *(self._key_event(mod, up=True) for mod in reversed(held)))
             raise
 
     def type_text(self, text):
@@ -204,8 +264,8 @@ class InputController:
         for offset in range(0, len(units), 2):
             scan = int.from_bytes(units[offset:offset + 2], "little")
             if scan in (10, 9):
-                code = VK["enter" if scan == 10 else "tab"]
-                items.extend([key(code), key(code, flags=2)])
+                name = "enter" if scan == 10 else "tab"
+                items.extend([self._key_event(name), self._key_event(name, up=True)])
             else:
                 items.extend([key(scan=scan, flags=4), key(scan=scan, flags=6)])
         for start in range(0, len(items), 128):

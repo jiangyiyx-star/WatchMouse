@@ -20,6 +20,21 @@ import input_control
 import receiver
 
 
+SCANCODE, KEYUP, EXTENDED = 0x0008, 0x0002, 0x0001
+
+
+def press(name):
+    """Keyboard event the way a real keyboard reports it: scancode, not VK."""
+    return ("key", 0, input_control.SCAN[name],
+            SCANCODE | (EXTENDED if name in input_control.EXTENDED else 0))
+
+
+def release(name):
+    event = list(press(name))
+    event[3] |= KEYUP
+    return tuple(event)
+
+
 def snapshot(items):
     return [
         ("key", item.ki.wVk, item.ki.wScan, item.ki.dwFlags) if item.type == 1
@@ -66,38 +81,60 @@ class InputSafetyTests(unittest.TestCase):
         self.controller.execute({"text": "A\r\nB\r\t"})
         self.assertEqual([
             ("key", 0, 65, 4), ("key", 0, 65, 6),
-            ("key", 13, 0, 0), ("key", 13, 0, 2),
+            press("enter"), release("enter"),
             ("key", 0, 66, 4), ("key", 0, 66, 6),
-            ("key", 13, 0, 0), ("key", 13, 0, 2),
-            ("key", 9, 0, 0), ("key", 9, 0, 2),
+            press("enter"), release("enter"),
+            press("tab"), release("tab"),
         ], self.events())
 
     def test_shortcut_holds_modifiers_and_releases_in_reverse_order(self):
         self.controller.execute({"key": "a", "modifiers": ["ctrl", "shift", "ctrl"]})
         self.assertEqual([
-            ("key", 17, 0, 0), ("key", 16, 0, 0),
-            ("key", 65, 0, 0), ("key", 65, 0, 2),
-            ("key", 16, 0, 2), ("key", 17, 0, 2),
+            press("ctrl"), press("shift"),
+            press("a"), release("a"),
+            release("shift"), release("ctrl"),
         ], self.events())
 
     def test_extended_key_and_windows_modifier_flags(self):
         self.controller.execute({"key": "LEFT", "modifiers": ["win"]})
         self.assertEqual([
-            ("key", 91, 0, 1), ("key", 37, 0, 1),
-            ("key", 37, 0, 3), ("key", 91, 0, 3),
+            press("win"), press("left"),
+            release("left"), release("win"),
         ], self.events())
 
-    def test_backspace_uses_nonextended_virtual_key(self):
+    def test_backspace_uses_nonextended_scancode(self):
         self.controller.execute({"key": "backspace"})
+        self.assertEqual([press("backspace"), release("backspace")], self.events())
+
+    def test_keys_are_sent_as_hardware_scancodes(self):
+        """Games read scancodes; a virtual-key-only event is invisible to them."""
+        self.controller.execute({"key": "w", "modifiers": ["ctrl"]})
         self.assertEqual([
-            ("key", 0x08, 0, 0), ("key", 0x08, 0, 2),
+            ("key", 0, input_control.SCAN["ctrl"], SCANCODE),
+            ("key", 0, input_control.SCAN["w"], SCANCODE),
+            ("key", 0, input_control.SCAN["w"], SCANCODE | KEYUP),
+            ("key", 0, input_control.SCAN["ctrl"], SCANCODE | KEYUP),
         ], self.events())
 
-    def test_forward_delete_uses_extended_virtual_key(self):
+    def test_scancode_falls_back_to_virtual_key_when_layout_has_none(self):
+        """A layout without a scancode for the key still has to reach the app."""
+        self.controller.user32 = Mock()
+        self.controller.user32.MapVirtualKeyW.return_value = 0
+        saved = input_control.SCAN.pop("f12")
+        try:
+            event = self.controller._key_event("f12")
+        finally:
+            input_control.SCAN["f12"] = saved
+            self.controller._scans.pop("f12", None)
+            self.controller.user32 = None
+        self.assertEqual(input_control.VK["f12"], event.ki.wVk)
+        self.assertEqual(0, event.ki.wScan)
+        self.assertEqual(0, event.ki.dwFlags & input_control.KEYEVENTF_SCANCODE)
+
+    def test_forward_delete_uses_extended_scancode(self):
         self.controller.execute({"key": "delete"})
-        self.assertEqual([
-            ("key", 0x2E, 0, 1), ("key", 0x2E, 0, 3),
-        ], self.events())
+        self.assertEqual([press("delete"), release("delete")], self.events())
+        self.assertEqual(EXTENDED, self.events()[0][3] & EXTENDED)
 
     def test_failed_shortcut_releases_main_key_and_all_modifiers(self):
         def fail_once(items):
@@ -108,7 +145,7 @@ class InputSafetyTests(unittest.TestCase):
         with self.assertRaises(OSError):
             self.controller.execute({"key": "a", "modifiers": ["ctrl", "shift"]})
         self.assertEqual([
-            ("key", 65, 0, 2), ("key", 16, 0, 2), ("key", 17, 0, 2),
+            release("a"), release("shift"), release("ctrl"),
         ], self.calls[1])
 
     def test_native_sender_rejects_zero_or_partial_sendinput(self):
@@ -156,24 +193,24 @@ class InputSafetyTests(unittest.TestCase):
 
     def test_gamepad_key_holds_down_until_the_phone_releases_it(self):
         self.controller.execute({"key": "space", "state": "down"})
-        self.assertEqual([("key", 0x20, 0, 0)], self.events())
+        self.assertEqual([press("space")], self.events())
         self.assertEqual({"space"}, self.controller.held_keys)
         self.controller.execute({"key": "space", "state": "up"})
-        self.assertEqual([("key", 0x20, 0, 0), ("key", 0x20, 0, 2)], self.events())
+        self.assertEqual([press("space"), release("space")], self.events())
         self.assertEqual(set(), self.controller.held_keys)
 
     def test_repeated_hold_and_release_never_duplicate_events(self):
         for state in ("down", "down", "up", "up"):
             self.controller.execute({"key": "w", "state": state})
-        self.assertEqual([("key", 87, 0, 0), ("key", 87, 0, 2)], self.events())
+        self.assertEqual([press("w"), release("w")], self.events())
 
     def test_gamepad_release_frees_every_held_key(self):
         for name in ("w", "d", "space"):
             self.controller.execute({"key": name, "state": "down"})
         self.calls.clear()
         self.controller.execute({"command": "MU"})
-        released = sorted(event[1] for event in self.events() if event[-1] == 2)
-        self.assertEqual([0x20, 68, 87], released)
+        released = sorted(event[2] for event in self.events() if event[0] == "key" and event[-1] & KEYUP)
+        self.assertEqual(sorted(input_control.SCAN[name] for name in ("w", "d", "space")), released)
         self.assertEqual(set(), self.controller.held_keys)
 
     def test_stuck_gamepad_key_is_released_after_the_phone_stops_sending(self):
@@ -181,7 +218,7 @@ class InputSafetyTests(unittest.TestCase):
         self.calls.clear()
         self.controller.last_activity = time.monotonic() - 6
         self.controller._hold_expired()
-        self.assertEqual([("key", 87, 0, 2)], self.events())
+        self.assertEqual([release("w")], self.events())
         self.assertEqual(set(), self.controller.held_keys)
 
     def test_hold_and_release_reject_bad_state_and_modifiers(self):
@@ -225,7 +262,7 @@ class InputSafetyTests(unittest.TestCase):
         self.assertFalse(key_worker.is_alive())
         self.assertEqual(4, len(calls))
         self.assertTrue(all(event[1] == 0 for batch in calls[:3] for event in batch))
-        self.assertEqual(("key", 17, 0, 0), calls[-1][0])
+        self.assertEqual(press("ctrl"), calls[-1][0])
 
 
 class ReceiverProtocolTests(unittest.TestCase):
@@ -552,6 +589,14 @@ class ReceiverProtocolTests(unittest.TestCase):
                 status, _, body = self.request(path=path, headers=headers)
                 self.assertEqual(200, status)
                 self.assertTrue(json.loads(body)["paired"])
+
+    def test_status_reports_keyboard_mode_and_elevation(self):
+        status, _, body = self.request(path="/api/status?token=test-token")
+        payload = json.loads(body)
+        self.assertEqual(200, status)
+        self.assertEqual("scancode", payload["keyboardMode"])
+        self.assertIn("elevated", payload)
+        self.assertIn("gamepad.native", payload["features"])
 
     def test_nonascii_token_is_rejected_with_http_response(self):
         wrong_token = urlencode({"token": "你好"})

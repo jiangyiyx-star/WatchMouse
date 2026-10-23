@@ -9,6 +9,8 @@
 - Optional native controller output on Windows: with the ViGEmBus driver and `pip install vgamepad`, games see a real Xbox 360 pad (`POST /api/pad`, 20 Hz snapshots, analog sticks and triggers). Without it the panel keeps the dependency-free key mapping.
 - The receiver reports `nativeGamepad` and `padBackend` in `/api/status`; the phone switches modes by itself and refreshes a held snapshot once a second so the five-second idle watchdog does not fire mid-hold.
 - Tests cover pad snapshot validation, the authenticated `/api/pad` endpoint, fallback to key mapping, neutral release on mode change, and native mode in the frontend smoke suite.
+- Keyboard events are injected as hardware scancodes (virtual key as a fallback when the layout has none), so games that read DirectInput or raw input see them; `/api/status` reports `keyboardMode` and `elevated`, and the connection sheet explains both.
+- The gamepad keeps a trackpad in the seam between the grips: drag moves the cursor, a short tap left-clicks, holding still right-clicks. Portrait puts it in the open space above the thumbs.
 
 ## 2.6 — 2026-10-13
 

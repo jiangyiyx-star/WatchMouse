@@ -398,6 +398,45 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
     'the d-pad release still releases W it held');
   assert(!padButton('dup').classList.contains('is-pressed') && !leftStick.classList.contains('active'));
 
+  // Trackpad in the seam between the grips: drag moves the cursor, a short tap
+  // clicks, holding still right-clicks, and leaving the tab clears it.
+  const padTrackpad = document.getElementById('padTrackpad');
+  assert(padTrackpad, 'the pad keeps a trackpad between the two grips');
+  padTrackpad.getBoundingClientRect = () => ({left: 600, top: 200, width: 200, height: 100});
+
+  records.length = 0;
+  padTrackpad.emit('pointerdown', {pointerId: 31, button: 0, clientX: 600, clientY: 200});
+  assert(padTrackpad.classList.contains('active'), 'touching the pad trackpad highlights it');
+  padTrackpad.emit('pointermove', {pointerId: 31, clientX: 620, clientY: 208});
+  padTrackpad.emit('pointermove', {pointerId: 31, clientX: 640, clientY: 210});
+  padTrackpad.emit('pointerup', {pointerId: 31, clientX: 640, clientY: 210});
+  await wait(); await wait(); await wait();
+  const padMoves = records.filter(packet => packet.command?.startsWith('M '));
+  assert(padMoves.length >= 1, 'dragging the pad trackpad moves the mouse');
+  assert(!records.some(packet => packet.command === 'C'), 'a drag is not a click');
+  assert(!padTrackpad.classList.contains('active'), 'the highlight clears on release');
+
+  records.length = 0;
+  padTrackpad.emit('pointerdown', {pointerId: 32, button: 0, clientX: 600, clientY: 200});
+  padTrackpad.emit('pointerup', {pointerId: 32, clientX: 601, clientY: 201});
+  await wait(); await wait(); await wait();
+  assert.equal(records.filter(packet => packet.command).at(-1)?.command, 'C', 'a short tap clicks the left button');
+
+  records.length = 0;
+  padTrackpad.emit('pointerdown', {pointerId: 33, button: 0, clientX: 600, clientY: 200});
+  await new Promise(resolve => setTimeout(resolve, 470));
+  padTrackpad.emit('pointerup', {pointerId: 33, clientX: 600, clientY: 200});
+  await wait(); await wait(); await wait();
+  assert.equal(records.filter(packet => packet.command).at(-1)?.command, 'RC', 'holding still right-clicks');
+
+  records.length = 0;
+  padTrackpad.emit('pointerdown', {pointerId: 34, button: 0, clientX: 600, clientY: 200});
+  elements.mouseModeButton.click();
+  await wait(); await wait(); await wait();
+  assert(!padTrackpad.classList.contains('active'), 'leaving the pad tab clears the trackpad state');
+  elements.gamepadModeButton.click();
+  await wait(); await wait(); await wait();
+
   // Leaving gamepad mode while a button is down must not leave it stuck.
   records.length = 0;
   padButton('b').emit('pointerdown', {pointerId: 24, button: 0});
@@ -412,6 +451,19 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
 // Native pad mode: a receiver with ViGEmBus reports nativeGamepad, so the
   // gamepad panel posts controller snapshots instead of mapped keystrokes.
   const settle = () => new Promise(resolve => setTimeout(resolve, 140));
+  // Settings diagnostics explain how keys are injected and warn when the
+  // receiver cannot reach an elevated game.
+  const diag = createApp('gamepad', {keyboardMode: 'scancode', elevated: false});
+  await wait(); await wait();
+  const diagNote = diag.document.getElementById('inputModeNote');
+  assert(diagNote && !diagNote.hidden, 'connection settings show the input diagnostics note');
+  assert(diagNote.textContent.includes('scancode'), 'the note names the scancode injection');
+  assert(diagNote.textContent.toLowerCase().includes('administrator'), 'the note warns about elevated games');
+  const plain = createApp('gamepad', {keyboardMode: 'virtual-key', elevated: true});
+  await wait(); await wait();
+  assert(plain.document.getElementById('inputModeNote').hidden,
+    'a virtual-key receiver without elevation trouble shows no note');
+
   const native = createApp('gamepad', {nativeGamepad: true});
   await wait();
   const nativeButton = name => native.document.querySelectorAll('#gamepadPanel [data-pad]').find(button => button.dataset.pad === name);
@@ -822,5 +874,5 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
   heartbeat.document.hidden = true; heartbeat.document.emit('visibilitychange'); await settle(heartbeat);
   assert.equal(heartbeat.timers.size, 0, 'no heartbeat or polling remains in the background');
 
-  console.log('PASS: integrated minimal UI/silent success, modes/native focus, viewport resize, mouse/drag, independent scroll rail/fractions/cancel/cleanup, draft deletion/backspace, IME/Unicode send, pairing/input readiness, actionable permission errors/failed-send preservation, authenticated serialized requests, saved EN/ZH interface and pairing, interface-only dictation labels, non-overlapping status checks, permission/restart reconnect, hidden-page suspension, stale-input discard.');
+  console.log('PASS: integrated minimal UI/silent success, modes/native focus, viewport resize, mouse/drag, independent scroll rail/fractions/cancel/cleanup, draft deletion/backspace, IME/Unicode send, pairing/input readiness, actionable permission errors/failed-send preservation, authenticated serialized requests, saved EN/ZH interface and pairing, interface-only dictation labels, non-overlapping status checks, permission/restart reconnect, hidden-page suspension, stale-input discard, pad trackpad drag/tap/hold-right-click.');
 })().catch(error => {console.error(error); process.exitCode = 1;});

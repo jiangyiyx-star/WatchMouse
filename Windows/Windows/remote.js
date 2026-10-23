@@ -13,6 +13,10 @@
       gamepadControls: 'Gamepad controls', gamepadLayout: 'Gamepad layout', gamepadHint: 'Buttons map to keyboard keys for games that support them',
       gamepadHintNative: 'Native mode: the computer sees an Xbox controller',
       padFullscreen: 'Fullscreen landscape', padRotateHint: 'Turn the phone sideways for a better grip',
+      inputModeScancode: 'Keys are injected as hardware scancodes, so games that read raw input still see them',
+      inputModeElevated: 'Receiver is not elevated: a game launched as administrator will ignore input',
+      padTrackpad: 'Pad trackpad: drag to move the cursor, tap to click, hold still to right-click',
+      padTrackpadLabel: 'Trackpad', padTrackpadHint: 'Drag to move · tap to click · hold to right-click',
       leftStick: 'Left stick', rightStick: 'Right stick', dpad: 'D-pad', faceButtons: 'Face buttons',
       mouseControls: 'Mouse controls', touchpad: 'Touchpad: move with one finger, tap to click, scroll with two fingers',
       leftClick: 'Left click', rightClick: 'Right click', dragOff: 'Drag: hold the left mouse button',
@@ -43,6 +47,10 @@
       gamepadControls: '手柄控制', gamepadLayout: '手柄布局', gamepadHint: '按键映射为键盘，适合支持键鼠的游戏',
       gamepadHintNative: '原生模式：电脑已识别为 Xbox 手柄',
       padFullscreen: '全屏横屏游玩', padRotateHint: '横屏握持更顺手',
+      inputModeScancode: '按键以硬件扫描码注入，读原始输入的游戏也能收到',
+      inputModeElevated: '接收器未以管理员运行：游戏若以管理员启动会收不到按键',
+      padTrackpad: '手柄触控板：拖动移动鼠标，轻点左键，长按右键',
+      padTrackpadLabel: '触控板', padTrackpadHint: '拖动移动 · 轻点左键 · 长按右键',
       leftStick: '左摇杆', rightStick: '右摇杆', dpad: '方向键', faceButtons: '功能键',
       mouseControls: '鼠标控制', touchpad: '触控板：单指移动，轻点单击，双指滚动', leftClick: '鼠标左键', rightClick: '鼠标右键',
       dragOff: '拖动，点击按住左键', dragOn: '拖动已开启，点击松开左键', scroll: '滚轮', scrollUp: '向上滚动', scrollDown: '向下滚动',
@@ -240,6 +248,18 @@
       else checkConnection();
     }, delay);
   }
+  // Settings-panel diagnostics: how keys reach the desktop, and whether the
+  // receiver could drive an elevated game at all.
+  function updateInputModeNote(result) {
+    const note = $('inputModeNote');
+    if (!note) return;
+    const parts = [];
+    if (result.keyboardMode === 'scancode') parts.push(t('inputModeScancode'));
+    if (result.elevated === false) parts.push(t('inputModeElevated'));
+    note.textContent = parts.join(' · ');
+    note.hidden = parts.length === 0;
+  }
+
   async function checkConnection(manual = false) {
     cancelStatusTimer();
     if (manual) { retryBlocked = false; reconnectFailures = 0; }
@@ -266,6 +286,7 @@
       // panel from keyboard mapping to real controller input.
       const nativePad = result.nativeGamepad === true;
       if (nativePad !== padNative) { padNative = nativePad; updatePadHint(); }
+      updateInputModeNote(result);
       // A manually corrected key must also replace an old QR key in the URL;
       // otherwise reloading or bookmarking the page restores the stale key.
       try {
@@ -698,6 +719,66 @@
   function stopPadKeepAlive() {
     if (padKeepTimer) { clearTimeout(padKeepTimer); padKeepTimer = null; }
   }
+  // Trackpad in the middle of the pad: drag moves the cursor, a short tap is a
+  // left click, holding still is a right click. Same queue as the mouse panel,
+  // so nothing is sent while the finger is still.
+  const padTrackpad = $('padTrackpad');
+  const padTrackKnob = padTrackpad.querySelector('.pad-trackpad-knob');
+  let padTrackPointer = null;
+  function movePadTrackKnob(event) {
+    if (!padTrackKnob) return;
+    const rect = padTrackpad.getBoundingClientRect();
+    const x = Math.max(-1, Math.min(1, (event.clientX - (rect.left + rect.width / 2)) / (rect.width / 2)));
+    const y = Math.max(-1, Math.min(1, (event.clientY - (rect.top + rect.height / 2)) / (rect.height / 2)));
+    padTrackKnob.style.transform = `translate(${x * rect.width * 0.3}px, ${y * rect.height * 0.3}px)`;
+  }
+  function resetPadTrackpad() {
+    padTrackPointer = null;
+    padTrackpad.classList.remove('active');
+    if (padTrackKnob) padTrackKnob.style.transform = '';
+  }
+  padTrackpad.addEventListener('pointerdown', event => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (padTrackPointer) return;
+    if (!connected) { feedback('notConnected', true); setConnectionPanel(true); return; }
+    padTrackpad.setPointerCapture(event.pointerId);
+    padTrackPointer = {id: event.pointerId, x: event.clientX, y: event.clientY, moved: 0, started: performance.now()};
+    padTrackpad.classList.add('active');
+    movePadTrackKnob(event);
+  });
+  padTrackpad.addEventListener('pointermove', event => {
+    if (!padTrackPointer || padTrackPointer.id !== event.pointerId) return;
+    event.preventDefault();
+    const dx = event.clientX - padTrackPointer.x, dy = event.clientY - padTrackPointer.y;
+    padTrackPointer.x = event.clientX;
+    padTrackPointer.y = event.clientY;
+    padTrackPointer.moved += Math.hypot(dx, dy);
+    pendingX += dx * sensitivity;
+    pendingY += dy * sensitivity;
+    scheduleMotion();
+    movePadTrackKnob(event);
+  });
+  function finishPadTrack(event, cancelled) {
+    if (!padTrackPointer || padTrackPointer.id !== event.pointerId) return;
+    const gesture = padTrackPointer;
+    if (padTrackpad.hasPointerCapture(event.pointerId)) padTrackpad.releasePointerCapture(event.pointerId);
+    resetPadTrackpad();
+    if (cancelled) { flushMotion(); return; }
+    if (gesture.moved < 8) {
+      // send() flushes the pending motion first, so the click lands where the
+      // cursor actually is rather than where it started.
+      sendQuietly({command: performance.now() - gesture.started >= 450 ? 'RC' : 'C'});
+    } else {
+      flushMotion();
+    }
+  }
+  padTrackpad.addEventListener('pointerup', event => finishPadTrack(event, false));
+  padTrackpad.addEventListener('pointercancel', event => finishPadTrack(event, true));
+  padTrackpad.addEventListener('lostpointercapture', event => finishPadTrack(event, true));
+  padTrackpad.addEventListener('contextmenu', event => event.preventDefault());
+
   function clearPadState() {
     stopPadKeepAlive();
     heldPadKeys.clear();
@@ -730,6 +811,7 @@
   function clearGamepadUi() {
     document.querySelectorAll('#gamepadPanel .is-pressed').forEach(button => button.classList.remove('is-pressed'));
     document.querySelectorAll('#gamepadPanel .stick').forEach(resetStickVisual);
+    resetPadTrackpad();
   }
   function releaseGamepadControls(sendServer = true) {
     const hadKeys = heldPadKeys.size > 0 || heldStickKeys.size > 0;
@@ -818,7 +900,7 @@
     stick.addEventListener('lostpointercapture', endStick);
     stick.addEventListener('contextmenu', event => event.preventDefault());
   });
-  document.querySelectorAll('#gamepadPanel button, #gamepadPanel .stick').forEach(node => {
+  document.querySelectorAll('#gamepadPanel button, #gamepadPanel .stick, #padTrackpad').forEach(node => {
     node.addEventListener('pointerdown', event => event.preventDefault());
   });
 

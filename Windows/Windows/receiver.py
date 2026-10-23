@@ -15,6 +15,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
 from input_control import InputController
+import pad_control
 
 PORT, VERSION = 53514, "2.6"
 ASSETS = {"/": ("remote.html", "text/html"), "/remote.html": ("remote.html", "text/html"),
@@ -120,8 +121,9 @@ class ReceiverServer(ThreadingHTTPServer):
     max_connections = 64
     connection_timeout = 5
 
-    def __init__(self, address, token, controller):
+    def __init__(self, address, token, controller, pad=None):
         self.token, self.controller = token, controller
+        self.pad = pad if pad is not None else pad_control.VirtualPad()
         self.started_at, self.last_command_at = time.time(), 0.0
         self.command_count, self.last_client = 0, ""
         self.command_lock = threading.Lock()
@@ -201,6 +203,20 @@ class ReceiverServer(ThreadingHTTPServer):
             self.command_count += 1
             return result
 
+    def apply_pad(self, state, client):
+        # Order with keyboard input and shutdown so a pad snapshot can never
+        # arrive after release_all() cleared the controller.
+        snapshot = pad_control.normalize(state)
+        with self.command_lock:
+            if self._closing.is_set():
+                raise OSError("服务正在停止")
+            if not self.pad.available:
+                raise OSError("原生手柄不可用：" + (self.pad.error or "未安装驱动"))
+            result = self.pad.apply(snapshot)
+            self.last_command_at, self.last_client = time.time(), client
+            self.command_count += 1
+            return result
+
     def server_close(self):
         self._stop_connections()
         try:
@@ -208,6 +224,7 @@ class ReceiverServer(ThreadingHTTPServer):
             # commands waiting for this lock see _closing and cannot run later.
             with self.command_lock:
                 self.controller.release_all()
+                self.pad.close()
         finally:
             super().server_close()
 
@@ -289,7 +306,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_expect_100(self):
         try:
-            if self.command != "POST" or urlparse(self.path).path not in ("/api/command", "/watch"):
+            if self.command != "POST" or urlparse(self.path).path not in ("/api/command", "/api/pad", "/watch"):
                 self.close_connection = True
                 self.reply(404, {"ok": False, "error": "接口不存在"})
                 return False
@@ -331,7 +348,10 @@ class Handler(BaseHTTPRequestHandler):
                              "port": self.server.server_port, "commandCount": self.server.command_count,
                              "lastClient": self.server.last_client if paired else "",
                              "lastCommandAt": self.server.last_command_at if paired else 0,
-                             "features": ["mouse", "keyboard", "unicode", "watch", "gamepad"]})
+                             "nativeGamepad": bool(getattr(self.server.pad, "available", False)),
+                             "padBackend": "vigem" if getattr(self.server.pad, "available", False) else "keyboard",
+                             "padError": (getattr(self.server.pad, "error", "") if paired else ""),
+                             "features": ["mouse", "keyboard", "unicode", "watch", "gamepad", "gamepad.native"]})
         elif url.path == "/c":
             command = query.get("q", [""])[0]
             if command == "PING":
@@ -374,9 +394,18 @@ class Handler(BaseHTTPRequestHandler):
         except OSError as error:
             self.reply(409, str(error) if plain else {"ok": False, "error": str(error), "errorCode": error_code(error)}, "text/plain" if plain else "application/json")
 
+    def perform_pad(self, payload):
+        try:
+            result = self.server.apply_pad(payload.get("pad"), self.client_address[0])
+            self.reply(200, {"ok": True, "result": result})
+        except (ValueError, TypeError, OverflowError) as error:
+            self.reply(400, {"ok": False, "error": str(error), "errorCode": error_code(error)})
+        except OSError as error:
+            self.reply(409, {"ok": False, "error": str(error), "errorCode": error_code(error)})
+
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/api/command", "/watch"):
+        if path not in ("/api/command", "/api/pad", "/watch"):
             self.close_connection = True
             return self.reply(404, {"ok": False, "error": "接口不存在"})
         if not self.same_origin():
@@ -406,7 +435,10 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("请求必须是 JSON 对象")
             if not self.authorized(payload.get("token", "")):
                 return self.reply(401, {"ok": False, "error": "配对码无效，请扫描电脑上的二维码", "errorCode": "invalid_token"})
-            self.perform(payload)
+            if path == "/api/pad":
+                self.perform_pad(payload)
+            else:
+                self.perform(payload)
         except (ValueError, UnicodeError) as error:
             self.reply(400, {"ok": False, "error": str(error)})
 
@@ -461,8 +493,8 @@ class Handler(BaseHTTPRequestHandler):
         controls += "<p>" + t("每点一次执行一次。请先在电脑选中输入框。") + "</p><p><a href='/?" + escape(urlencode({"token": token}), quote=True) + "'>" + t("手机触控板版") + "</a></p></body></html>"
         return head + controls
 
-def create_server(host="0.0.0.0", port=PORT, token=None, controller=None):
-    return ReceiverServer((host, port), token or load_settings()["token"], controller or InputController())
+def create_server(host="0.0.0.0", port=PORT, token=None, controller=None, pad=None):
+    return ReceiverServer((host, port), token or load_settings()["token"], controller or InputController(), pad)
 
 def main():
     parser = argparse.ArgumentParser(description="WatchMouse 接收器（桌面 App 请运行 app.py）")

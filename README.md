@@ -43,12 +43,16 @@ Desktop builds include Python and the web UI. You do not need to install Python 
 
 **Pair once:** the desktop keeps its pairing key across restarts and upgrades; the phone saves it in the same browser and automatically reconnects when the receiver returns. Bookmark the paired URL for next time. Clearing browser storage or resetting the desktop configuration requires pairing again. If the computer's LAN address changes, scan its updated QR code; the pairing key itself stays the same. Browser storage is tied to the address, so automatic discovery across changed IP addresses is not supported.
 
+### Native gamepad on Windows (optional)
+
+By default the gamepad panel maps its buttons to keyboard keys, which keeps the receiver dependency-free. Install the [ViGEmBus driver](https://github.com/nefarius/ViGEmBus/releases) once and run `pip install vgamepad` to let games see a real Xbox 360 controller instead. Restart WatchMouse afterwards; the phone detects the backend from `/api/status` and switches to native mode on its own, with a hint under the pad. Uninstall the driver to fall back to key mapping. macOS has no equivalent virtual-HID path, so the Mac receiver always keeps the key mapping.
+
 ## What it does
 
 - **Mouse:** one-finger movement, tap to click, left/right buttons, drag toggle, two-finger scrolling, and a separate one-finger scroll strip.
 - **Keyboard:** draft text on your phone and send it when ready. Supports Chinese, emoji, phone IME, and keyboard dictation. Text and input events go to the focused desktop app.
 - **Video:** large previous, play/pause, and next buttons for apps that respond to arrow/space keys.
-- **Gamepad:** Xbox and PlayStation layouts with dual sticks, d-pad, ABXY/△○□✕, shoulders, and View/Menu. Buttons hold down while pressed and release on lift. Keys map to the keyboard, so it suits games that accept keyboard input.
+- **Gamepad:** Xbox and PlayStation layouts with dual sticks, d-pad, ABXY/△○□✕, shoulders, and View/Menu. Buttons hold down while pressed and release on lift. Keys map to the keyboard, so it suits games that accept keyboard input. On Windows with the optional ViGEmBus driver the phone switches to native mode and the computer sees a real Xbox 360 controller.
 - **Language:** English by default, with saved Simplified Chinese selection on the phone and both desktop receivers.
 - **Mac shortcuts:** protocol Ctrl/Win modifiers map to Command; Alt maps to Option.
 - **Watch:** an experimental JavaScript-free `/watch` page. Physical Apple Watch compatibility has not been verified.

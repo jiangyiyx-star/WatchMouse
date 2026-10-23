@@ -5,7 +5,9 @@
 - Phone gamepad mode with switchable Xbox and PlayStation layouts: dual sticks, d-pad, ABXY/△○□✕, shoulders, and View/Menu.
 - Held buttons and sticks keep the mapped key down while pressed, release on lift, and free everything when you leave the mode, hide the page, or the phone stops sending.
 - Portrait phones (up to 560 px wide) lay the gamepad out as a 2×2 pad instead of clipping the right stick and R2 off-screen.
-- Tests cover layout switching, held-key reference counting, stuck-key release, and both receivers' hold/release paths.
+- Optional native controller output on Windows: with the ViGEmBus driver and `pip install vgamepad`, games see a real Xbox 360 pad (`POST /api/pad`, 20 Hz snapshots, analog sticks and triggers). Without it the panel keeps the dependency-free key mapping.
+- The receiver reports `nativeGamepad` and `padBackend` in `/api/status`; the phone switches modes by itself and refreshes a held snapshot once a second so the five-second idle watchdog does not fire mid-hold.
+- Tests cover pad snapshot validation, the authenticated `/api/pad` endpoint, fallback to key mapping, neutral release on mode change, and native mode in the frontend smoke suite.
 
 ## 2.6 — 2026-10-13
 

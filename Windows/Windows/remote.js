@@ -11,6 +11,7 @@
       video: 'Video', mouse: 'Mouse', gamepad: 'Pad', keyboard: 'Keyboard', language: 'Language', interfaceLanguage: 'Interface language',
       videoControls: 'Video controls', previousVideo: 'Previous video', playPause: 'Play or pause', nextVideo: 'Next video',
       gamepadControls: 'Gamepad controls', gamepadLayout: 'Gamepad layout', gamepadHint: 'Buttons map to keyboard keys for games that support them',
+      gamepadHintNative: 'Native mode: the computer sees an Xbox controller',
       leftStick: 'Left stick', rightStick: 'Right stick', dpad: 'D-pad', faceButtons: 'Face buttons',
       mouseControls: 'Mouse controls', touchpad: 'Touchpad: move with one finger, tap to click, scroll with two fingers',
       leftClick: 'Left click', rightClick: 'Right click', dragOff: 'Drag: hold the left mouse button',
@@ -39,6 +40,7 @@
       video: '抖音', mouse: '鼠标', gamepad: '手柄', keyboard: '键鼠', language: '语言', interfaceLanguage: '界面语言',
       videoControls: '视频遥控', previousVideo: '上一个视频', playPause: '播放或暂停', nextVideo: '下一个视频',
       gamepadControls: '手柄控制', gamepadLayout: '手柄布局', gamepadHint: '按键映射为键盘，适合支持键鼠的游戏',
+      gamepadHintNative: '原生模式：电脑已识别为 Xbox 手柄',
       leftStick: '左摇杆', rightStick: '右摇杆', dpad: '方向键', faceButtons: '功能键',
       mouseControls: '鼠标控制', touchpad: '触控板：单指移动，轻点单击，双指滚动', leftClick: '鼠标左键', rightClick: '鼠标右键',
       dragOff: '拖动，点击按住左键', dragOn: '拖动已开启，点击松开左键', scroll: '滚轮', scrollUp: '向上滚动', scrollDown: '向下滚动',
@@ -134,6 +136,7 @@
     document.querySelectorAll('[data-i18n]').forEach(element => { element.textContent = t(element.dataset.i18n); });
     document.querySelectorAll('[data-i18n-aria]').forEach(element => { element.setAttribute('aria-label', t(element.dataset.i18nAria)); });
     document.querySelectorAll('[data-i18n-placeholder]').forEach(element => { element.setAttribute('placeholder', t(element.dataset.i18nPlaceholder)); });
+    updatePadHint();
     $('languageSelect').value = language;
     refreshWatchLink();
     renderConnection(); updateDragUI(); updateDeleteLabel();
@@ -257,6 +260,10 @@
         return;
       }
       storage.set('watchmouse_token', token);
+      // A receiver that reports a native pad backend switches the gamepad
+      // panel from keyboard mapping to real controller input.
+      const nativePad = result.nativeGamepad === true;
+      if (nativePad !== padNative) { padNative = nativePad; updatePadHint(); }
       // A manually corrected key must also replace an old QR key in the URL;
       // otherwise reloading or bookmarking the page restores the stale key.
       try {
@@ -559,30 +566,145 @@
     left: {up: 'w', down: 's', left: 'a', right: 'd'},
     right: {up: 'up', down: 'down', left: 'left', right: 'right'}
   };
+// Pad buttons are tracked by pad id ('a', 'lb', 'lt', ...). Keyboard mode
+  // maps them through PAD_KEYS; native mode sends them to the virtual pad.
   const heldPadKeys = new Map();
+  const heldStickKeys = new Map();
+  const activeKeys = new Set();
   const stickPointers = new Map();
   const stickHeld = {left: new Set(), right: new Set()};
+  const stickAxes = {left: {x: 0, y: 0}, right: {x: 0, y: 0}};
   let gamepadLayout = storage.get('watchmouse_pad_layout') === 'ps' ? 'ps' : 'xbox';
+  // Declared with var so the early language pass can read it safely.
+  var padNative = false;
+  let padInFlight = false, padDirty = false, padSendTimer = null, padKeepTimer = null;
 
-  function holdPadKey(name) {
-    const count = heldPadKeys.get(name) || 0;
-    heldPadKeys.set(name, count + 1);
-    if (!count) sendQuietly({key: name, state: 'down'});
+  function wantedPadKeys() {
+    const wanted = new Set();
+    for (const id of heldPadKeys.keys()) {
+      const key = PAD_KEYS[id];
+      if (key) wanted.add(key);
+    }
+    for (const key of heldStickKeys.keys()) wanted.add(key);
+    return wanted;
   }
-  function releasePadKey(name) {
-    const count = heldPadKeys.get(name) || 0;
+  function syncPadKeys() {
+    if (padNative) { schedulePadSend(); return; }
+    const wanted = wantedPadKeys();
+    for (const key of Array.from(activeKeys)) {
+      if (!wanted.has(key)) { activeKeys.delete(key); sendQuietly({key, state: 'up'}); }
+    }
+    for (const key of wanted) {
+      if (!activeKeys.has(key)) { activeKeys.add(key); sendQuietly({key, state: 'down'}); }
+    }
+  }
+  function holdPadKey(id) {
+    const count = heldPadKeys.get(id) || 0;
+    heldPadKeys.set(id, count + 1);
+    if (!count) syncPadKeys();
+  }
+  function releasePadKey(id) {
+    const count = heldPadKeys.get(id) || 0;
     if (count <= 1) {
-      heldPadKeys.delete(name);
-      if (count === 1) sendQuietly({key: name, state: 'up'});
+      if (count === 1) { heldPadKeys.delete(id); syncPadKeys(); }
       return;
     }
-    heldPadKeys.set(name, count - 1);
+    heldPadKeys.set(id, count - 1);
+  }
+  function refreshStickKeys() {
+    heldStickKeys.clear();
+    for (const side of ['left', 'right']) {
+      for (const key of stickHeld[side]) heldStickKeys.set(key, (heldStickKeys.get(key) || 0) + 1);
+    }
+    syncPadKeys();
   }
   function syncStickKeys(side, nextKeys) {
-    const previous = stickHeld[side];
-    for (const name of previous) if (!nextKeys.has(name)) releasePadKey(name);
-    for (const name of nextKeys) if (!previous.has(name)) holdPadKey(name);
     stickHeld[side] = nextKeys;
+    refreshStickKeys();
+  }
+  function setStickInput(side, nx, ny) {
+    stickAxes[side] = {x: nx, y: ny};
+    if (padNative) { schedulePadSend(); return; }
+    syncStickKeys(side, keysFromStick(side, nx, ny));
+  }
+  function roundAxis(value) { return Math.round(value * 100) / 100; }
+  function padSnapshot() {
+    const buttons = [];
+    let lt = 0, rt = 0;
+    for (const id of heldPadKeys.keys()) {
+      if (id === 'lt') lt = 1;
+      else if (id === 'rt') rt = 1;
+      else buttons.push(id);
+    }
+    const left = stickAxes.left, right = stickAxes.right;
+    return {
+      lx: roundAxis(left.x), ly: roundAxis(left.y),
+      rx: roundAxis(right.x), ry: roundAxis(right.y),
+      lt, rt, buttons
+    };
+  }
+  function activePadInput() {
+    const l = stickAxes.left, r = stickAxes.right;
+    return heldPadKeys.size > 0 || l.x !== 0 || l.y !== 0 || r.x !== 0 || r.y !== 0;
+  }
+  function schedulePadSend(immediate = false) {
+    if (!padNative) return;
+    padDirty = true;
+    if (padInFlight) return;
+    if (immediate) {
+      if (padSendTimer) { clearTimeout(padSendTimer); padSendTimer = null; }
+      sendPadState();
+      return;
+    }
+    if (!padSendTimer) padSendTimer = setTimeout(() => { padSendTimer = null; sendPadState(); }, 33);
+  }
+  async function sendPadState() {
+    if (!padNative || padInFlight || !connected || padSendTimer) return;
+    const body = JSON.stringify({token, pad: padSnapshot()});
+    padDirty = false;
+    padInFlight = true;
+    try {
+      await request('/api/pad', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-WatchMouse-Token': token}, body}, new AbortController(), 4000);
+      lastInputAck = performance.now();
+      feedback();
+    } catch (error) {
+      const message = errorMessage(error);
+      if (message === 'invalid_token') { retryBlocked = true; setConnection(false, message); }
+    } finally {
+      padInFlight = false;
+      if (!padNative || !connected) { stopPadKeepAlive(); return; }
+      // Coalesce whatever arrived while the previous snapshot was in flight.
+      if (padDirty) {
+        if (padSendTimer) { clearTimeout(padSendTimer); padSendTimer = null; }
+        padSendTimer = setTimeout(() => { padSendTimer = null; sendPadState(); }, 16);
+        return;
+      }
+      // A virtual pad holds its last state, so refresh a held input once a
+      // second; the receiver drops a silent pad after five seconds.
+      if (activePadInput()) startPadKeepAlive();
+      else stopPadKeepAlive();
+    }
+  }
+  function startPadKeepAlive() {
+    if (padKeepTimer) return;
+    padKeepTimer = setTimeout(() => { padKeepTimer = null; sendPadState(); }, 1000);
+  }
+  function stopPadKeepAlive() {
+    if (padKeepTimer) { clearTimeout(padKeepTimer); padKeepTimer = null; }
+  }
+  function clearPadState() {
+    stopPadKeepAlive();
+    heldPadKeys.clear();
+    heldStickKeys.clear();
+    activeKeys.clear();
+    stickHeld.left = new Set();
+    stickHeld.right = new Set();
+    stickAxes.left = {x: 0, y: 0};
+    stickAxes.right = {x: 0, y: 0};
+  }
+  function updatePadHint() {
+    const hint = document.querySelector('#gamepadPanel .gamepad-hint');
+    if (hint) hint.textContent = t(padNative ? 'gamepadHintNative' : 'gamepadHint');
   }
   function keysFromStick(side, nx, ny) {
     const map = STICK_KEYS[side];
@@ -604,16 +726,18 @@
     document.querySelectorAll('#gamepadPanel .stick').forEach(resetStickVisual);
   }
   function releaseGamepadControls(sendServer = true) {
-    const hadKeys = heldPadKeys.size > 0;
-    heldPadKeys.clear();
-    stickHeld.left = new Set();
-    stickHeld.right = new Set();
+    const hadKeys = heldPadKeys.size > 0 || heldStickKeys.size > 0;
+    const wasNative = padNative && activePadInput();
+    clearPadState();
     for (const [pointerId, state] of stickPointers) {
       if (state.stick.hasPointerCapture(pointerId)) state.stick.releasePointerCapture(pointerId);
     }
     stickPointers.clear();
     clearGamepadUi();
-    if (hadKeys && sendServer) enqueueRelease();
+    // A virtual pad keeps its last state, so queue a neutral snapshot even when
+    // the page is going away; the beacon below is the best-effort backstop.
+    if (wasNative) { schedulePadSend(true); return; }
+    if (hadKeys && sendServer) { syncPadKeys(); enqueueRelease(); }
   }
   function setGamepadLayout(layout) {
     gamepadLayout = layout === 'ps' ? 'ps' : 'xbox';
@@ -631,17 +755,17 @@
     const bind = event => {
       if (event.button !== undefined && event.button !== 0) return;
       event.preventDefault();
-      const name = PAD_KEYS[button.dataset.pad];
-      if (!name || button.classList.contains('is-pressed')) return;
+      const id = button.dataset.pad;
+      if (!id || button.classList.contains('is-pressed')) return;
       button.classList.add('is-pressed');
       try { button.setPointerCapture(event.pointerId); } catch (_) {}
-      holdPadKey(name);
+      holdPadKey(id);
     };
     const unbind = event => {
       if (!button.classList.contains('is-pressed')) return;
       button.classList.remove('is-pressed');
-      const name = PAD_KEYS[button.dataset.pad];
-      if (name) releasePadKey(name);
+      const id = button.dataset.pad;
+      if (id) releasePadKey(id);
       try { if (button.hasPointerCapture(event.pointerId)) button.releasePointerCapture(event.pointerId); } catch (_) {}
     };
     button.addEventListener('pointerdown', bind);
@@ -670,12 +794,12 @@
       const magnitude = Math.hypot(nx, ny);
       if (magnitude > 1) { nx /= magnitude; ny /= magnitude; }
       if (knob) knob.style.transform = 'translate(calc(-50% + ' + (nx * 28) + '%), calc(-50% + ' + (ny * 28) + '%))';
-      syncStickKeys(side, keysFromStick(side, nx, ny));
+      setStickInput(side, nx, ny);
     }
     function endStick(event) {
       if (!stickPointers.has(event.pointerId)) return;
       stickPointers.delete(event.pointerId);
-      syncStickKeys(side, new Set());
+      setStickInput(side, 0, 0);
       resetStickVisual(stick);
       try { if (stick.hasPointerCapture(event.pointerId)) stick.releasePointerCapture(event.pointerId); } catch (_) {}
     }
@@ -803,7 +927,7 @@
   function releaseDragOnLeave() {
     // Best-effort release before the browser suspends the page. The receiver
     // also releases a held button when its session times out.
-    const hadPadKeys = heldPadKeys.size > 0;
+    const hadPadKeys = heldPadKeys.size > 0 || activePadInput();
     if (dragActive || dragMayBeHeld || hadPadKeys) {
       flushMotion();
       // Keep an ordered release in the queue as well, so an in-flight MD
@@ -831,6 +955,10 @@
   function releaseBeacon() {
     if (releaseBeaconSent) return;
     try { releaseBeaconSent = navigator.sendBeacon('/api/command', new Blob([JSON.stringify({token: dragToken || token, command: 'MU'})], {type: 'application/json'})); } catch (_) {}
+    if (!padNative) return;
+    try {
+      navigator.sendBeacon('/api/pad', new Blob([JSON.stringify({token, pad: {lx: 0, ly: 0, rx: 0, ry: 0, lt: 0, rt: 0, buttons: []}})], {type: 'application/json'}));
+    } catch (_) {}
   }
   function suspendPage() {
     cancelStatusTimer(); statusVersion++; statusCheckQueued = false;

@@ -385,6 +385,52 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
   assert(records.some(packet => packet.command === 'MU'), 'leaving gamepad mode queues a release for held keys');
   assert(!padButton('b').classList.contains('is-pressed'));
 
+// Native pad mode: a receiver with ViGEmBus reports nativeGamepad, so the
+  // gamepad panel posts controller snapshots instead of mapped keystrokes.
+  const settle = () => new Promise(resolve => setTimeout(resolve, 140));
+  const native = createApp('gamepad', {nativeGamepad: true});
+  await wait();
+  const nativeButton = name => native.document.querySelectorAll('#gamepadPanel [data-pad]').find(button => button.dataset.pad === name);
+  const nativePad = () => native.records.filter(packet => packet.pad).map(packet => packet.pad).at(-1);
+  assert(native.document.querySelector('#gamepadPanel .gamepad-hint').textContent.includes('Xbox'),
+    'the hint switches to the native mode wording');
+  assert.equal(native.intervalCalls(), 0, 'native keep-alive uses timeouts, not a permanent interval');
+
+  nativeButton('a').emit('pointerdown', {pointerId: 31, button: 0});
+  await settle();
+  assert.deepEqual(nativePad().buttons, ['a'], 'native mode posts the pad button id');
+  assert.equal(native.records.filter(packet => packet.key).length, 0, 'native mode sends no keyboard commands');
+
+  const nativeStick = native.document.querySelectorAll('#gamepadPanel .stick').find(node => node.dataset.stick === 'right');
+  nativeStick.getBoundingClientRect = () => ({left: 0, top: 0, width: 100, height: 100});
+  nativeStick.emit('pointerdown', {pointerId: 32, button: 0, clientX: 50, clientY: 50});
+  nativeStick.emit('pointermove', {pointerId: 32, clientX: 100, clientY: 50});
+  await settle();
+  const axesSent = nativePad();
+  assert(axesSent.rx > 0.9 && axesSent.ry === 0, 'the right stick travels as an analog axis');
+
+  nativeButton('rt').emit('pointerdown', {pointerId: 33, button: 0});
+  await settle();
+  assert.equal(nativePad().rt, 1, 'RT travels as a trigger value');
+  assert(!nativePad().buttons.includes('rt'), 'triggers are not duplicated as buttons');
+
+  nativeStick.emit('pointerup', {pointerId: 32, clientX: 100, clientY: 50});
+  nativeButton('rt').emit('pointerup', {pointerId: 33, button: 0});
+  nativeButton('a').emit('pointerup', {pointerId: 31, button: 0});
+  await settle();
+  const neutralPad = nativePad();
+  assert.deepEqual(neutralPad.buttons, [], 'releasing everything sends a neutral snapshot');
+  assert.equal(neutralPad.rt, 0);
+  assert.equal(neutralPad.rx, 0);
+
+  // Leaving the panel while holding a native button must release it too.
+  nativeButton('x').emit('pointerdown', {pointerId: 34, button: 0});
+  await settle();
+  assert.deepEqual(nativePad().buttons, ['x']);
+  native.elements.mouseModeButton.click();
+  await settle();
+  assert.deepEqual(nativePad().buttons, [], 'switching mode releases the native pad');
+
   const pad = elements.touchpad;
   pad.emit('pointerdown', {pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 100});
   for (let i = 1; i <= 50; i++) pad.emit('pointermove', {pointerId: 1, clientX: 100 + i * 4, clientY: 100});

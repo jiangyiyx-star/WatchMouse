@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Rotation no longer leaves the phone controls stuck. Every pointer gesture (mouse touchpad, gamepad trackpad, sticks, scroll rail, held buttons) resets on `orientationchange`, width changes, fullscreen changes, mode switches, tab hiding, and when the last finger lifts — so a lost `pointerup`/`pointercancel` (common on iOS in landscape) can no longer leave a control thinking a finger is still down.
+- Each gesture also self-heals: touching a stuck control again clears the stale pointer first, and stale pointers on the mouse touchpad are pruned so one ghost finger no longer turns every later drag into a two-finger scroll.
+- `setPointerCapture` failures no longer abort the gesture handler.
+- iOS long-press callout is disabled outside text fields, so holding still for the right-click does not hand the touch to the system.
+- View/Menu buttons on the gamepad grow to 36×56 px for a comfortable tap.
+
 ## 2.7 — 2026-10-23
 
 - Phone gamepad mode with switchable Xbox and PlayStation layouts: dual sticks, d-pad, ABXY/△○□✕, shoulders, and View/Menu.

@@ -471,6 +471,15 @@
     sendQuietly({command: dragActive ? 'MD' : 'MU'});
   });
 
+  // 每个指针手势都在这里登记一个复位函数。旋转、进出全屏、切后台、切换模式，
+  // 甚至浏览器漏发 pointerup / pointercancel 时，都能把控件恢复到“没有手指”
+  // 的状态，不会出现“横屏之后触控板再也点不动”这类粘住的问题。
+  const gestureResets = new Set();
+  function onGestureReset(reset) { gestureResets.add(reset); return reset; }
+  function cancelAllGestures() {
+    for (const reset of gestureResets) { try { reset(); } catch (_) {} }
+  }
+
   const pad = $('touchpad');
   function cancelIndicator() {
     if (indicatorFrame !== null) { cancelAnimationFrame(indicatorFrame); indicatorFrame = null; }
@@ -496,10 +505,15 @@
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     event.preventDefault();
     if (!connected) { feedback('notConnected', true); setConnectionPanel(true); return; }
-    pad.setPointerCapture(event.pointerId);
+    // 上一次抬手事件如果丢了（旋转屏幕、弹系统手势、页面被遮挡），这里残留的
+    // 指针会让后面的单指拖动被当成双指滚动，所以先把超时的旧指针清掉。
+    const now = performance.now();
+    for (const [id, point] of [...pointers]) if (now - point.at > 1500) pointers.delete(id);
+    if (!pointers.size) gesture = null;
+    try { pad.setPointerCapture(event.pointerId); } catch (_) {}
     padRect = pad.getBoundingClientRect();
-    pointers.set(event.pointerId, {x: event.clientX, y: event.clientY});
-    if (pointers.size === 1) gesture = {started: performance.now(), moved: 0, multi: false, center: centroid()};
+    pointers.set(event.pointerId, {x: event.clientX, y: event.clientY, at: now});
+    if (pointers.size === 1) gesture = {started: now, moved: 0, multi: false, center: centroid()};
     else { gesture.multi = true; gesture.center = centroid(); }
     pad.classList.add('is-touching');
     showPointer(event);
@@ -508,7 +522,7 @@
     const previous = pointers.get(event.pointerId);
     if (!previous || !gesture || !Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return;
     const dx = event.clientX - previous.x, dy = event.clientY - previous.y;
-    pointers.set(event.pointerId, {x: event.clientX, y: event.clientY});
+    pointers.set(event.pointerId, {x: event.clientX, y: event.clientY, at: performance.now()});
     gesture.moved += Math.hypot(dx, dy);
     if (pointers.size >= 2) {
       const center = centroid();
@@ -538,6 +552,15 @@
   pad.addEventListener('pointercancel', event => finishPointer(event, true));
   pad.addEventListener('lostpointercapture', event => finishPointer(event, true));
   pad.addEventListener('contextmenu', event => event.preventDefault());
+  // 复位：任何一次布局变化都把鼠标触控板当作“手指已经离开”。
+  onGestureReset(() => {
+    pointers.clear();
+    gesture = null;
+    pendingScroll = 0;
+    pad.classList.remove('is-touching');
+    cancelIndicator();
+    $('touchIndicator').hidden = true;
+  });
 
   const scrollSurface = $('scrollSurface');
   function clearRailGesture(discard = true) {
@@ -555,9 +578,13 @@
   scrollSurface.addEventListener('pointerdown', event => {
     event.preventDefault();
     event.stopPropagation();
-    if (railPointer || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    if (railPointer) {
+      // 滚动条也是单指操作，残留即上次抬手丢失，先清掉再重新开始。
+      clearRailGesture();
+    }
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
     if (!connected) { feedback('notConnected', true); setConnectionPanel(true); return; }
-    scrollSurface.setPointerCapture(event.pointerId);
+    try { scrollSurface.setPointerCapture(event.pointerId); } catch (_) {}
     railPointer = {id: event.pointerId, y: event.clientY};
     scrollSurface.classList.add('active');
   });
@@ -579,6 +606,7 @@
   scrollSurface.addEventListener('pointercancel', event => { if (railPointer && railPointer.id === event.pointerId) clearRailGesture(); });
   scrollSurface.addEventListener('lostpointercapture', event => { if (railPointer && railPointer.id === event.pointerId) clearRailGesture(); });
   scrollSurface.addEventListener('contextmenu', event => event.preventDefault());
+  onGestureReset(() => { if (railPointer) clearRailGesture(); });
 
   const PAD_KEYS = {
     lt: '1', lb: 'q', rb: 'r', rt: '2', select: 'tab', start: 'enter',
@@ -741,9 +769,13 @@
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
-    if (padTrackPointer) return;
+    if (padTrackPointer) {
+      // 触控板只认一根手指。这里还有残留说明上一条抬手事件丢了，
+      // 直接复位，否则触控板会一直以为手指还按在上面。
+      resetPadTrackpad();
+    }
     if (!connected) { feedback('notConnected', true); setConnectionPanel(true); return; }
-    padTrackpad.setPointerCapture(event.pointerId);
+    try { padTrackpad.setPointerCapture(event.pointerId); } catch (_) {}
     padTrackPointer = {id: event.pointerId, x: event.clientX, y: event.clientY, moved: 0, started: performance.now()};
     padTrackpad.classList.add('active');
     movePadTrackKnob(event);
@@ -763,7 +795,7 @@
   function finishPadTrack(event, cancelled) {
     if (!padTrackPointer || padTrackPointer.id !== event.pointerId) return;
     const gesture = padTrackPointer;
-    if (padTrackpad.hasPointerCapture(event.pointerId)) padTrackpad.releasePointerCapture(event.pointerId);
+    if (padTrackpad.hasPointerCapture(event.pointerId)) { try { padTrackpad.releasePointerCapture(event.pointerId); } catch (_) {} }
     resetPadTrackpad();
     if (cancelled) { flushMotion(); return; }
     if (gesture.moved < 8) {
@@ -778,6 +810,7 @@
   padTrackpad.addEventListener('pointercancel', event => finishPadTrack(event, true));
   padTrackpad.addEventListener('lostpointercapture', event => finishPadTrack(event, true));
   padTrackpad.addEventListener('contextmenu', event => event.preventDefault());
+  onGestureReset(resetPadTrackpad);
 
   function clearPadState() {
     stopPadKeepAlive();
@@ -809,7 +842,10 @@
     stick.classList.remove('active');
   }
   function clearGamepadUi() {
-    document.querySelectorAll('#gamepadPanel .is-pressed').forEach(button => button.classList.remove('is-pressed'));
+    document.querySelectorAll('#gamepadPanel .is-pressed').forEach(button => {
+      button.classList.remove('is-pressed');
+      button.padPointer = undefined;
+    });
     document.querySelectorAll('#gamepadPanel .stick').forEach(resetStickVisual);
     resetPadTrackpad();
   }
@@ -844,13 +880,19 @@
       if (event.button !== undefined && event.button !== 0) return;
       event.preventDefault();
       const id = button.dataset.pad;
-      if (!id || button.classList.contains('is-pressed')) return;
+      if (!id) return;
+      // 记下是哪个指针按着这个键：同一根手指重复按下说明上次的抬手丢了，
+      // 先把它松开再重新按住，不会出现“按键一直按着”的假状态。
+      if (button.padPointer === event.pointerId) return;
+      if (button.padPointer !== undefined) { releasePadKey(id); button.classList.remove('is-pressed'); }
+      button.padPointer = event.pointerId;
       button.classList.add('is-pressed');
       try { button.setPointerCapture(event.pointerId); } catch (_) {}
       holdPadKey(id);
     };
     const unbind = event => {
-      if (!button.classList.contains('is-pressed')) return;
+      if (button.padPointer !== event.pointerId) return;
+      button.padPointer = undefined;
       button.classList.remove('is-pressed');
       const id = button.dataset.pad;
       if (id) releasePadKey(id);
@@ -868,8 +910,11 @@
     stick.addEventListener('pointerdown', event => {
       if (event.button !== undefined && event.button !== 0) return;
       event.preventDefault();
+      // 一根摇杆只跟一根手指。残留的旧指针说明上一次抬手事件丢了，
+      // 直接作废，否则摇杆会停在“手指还按着”的那一档。
+      for (const [id, point] of [...stickPointers]) if (point.stick === stick && id !== event.pointerId) stickPointers.delete(id);
       stickPointers.set(event.pointerId, {stick, side});
-      stick.setPointerCapture(event.pointerId);
+      try { stick.setPointerCapture(event.pointerId); } catch (_) {}
       stick.classList.add('active');
       moveStick(event);
     });
@@ -903,6 +948,21 @@
   document.querySelectorAll('#gamepadPanel button, #gamepadPanel .stick, #padTrackpad').forEach(node => {
     node.addEventListener('pointerdown', event => event.preventDefault());
   });
+  // 复位：摇杆和按住的键都回到中位/松开，避免旋转后摇杆卡在某个方向。
+  onGestureReset(() => {
+    const touched = new Set([...stickPointers.values()].map(point => point.stick));
+    stickPointers.clear();
+    touched.forEach(resetStickVisual);
+    setStickInput('left', 0, 0);
+    setStickInput('right', 0, 0);
+    document.querySelectorAll('#gamepadPanel [data-pad]').forEach(button => {
+      if (button.padPointer === undefined) return;
+      button.padPointer = undefined;
+      button.classList.remove('is-pressed');
+      const id = button.dataset.pad;
+      if (id) releasePadKey(id);
+    });
+  });
 
   // Fullscreen + landscape lock puts the grips under the thumbs and hides the
   // browser chrome. iOS Safari cannot lock orientation, so the CSS layout and
@@ -912,6 +972,9 @@
   }
   function setPadImmersive(on) {
     const shell = document.querySelector('.app-shell');
+    // 进/出全屏会改变可用高度，手上的手势必须作废，否则触控板会停在按下状态。
+    cancelAllGestures();
+    releaseDragOnLeave();
     document.body.classList.toggle('pad-immersive', on);
     const button = $('padFullscreenButton');
     if (button) button.setAttribute('aria-pressed', String(on));
@@ -958,7 +1021,7 @@
   function setMode(nextMode, focusInput = false) {
     if (!['douyin', 'mouse', 'keyboard', 'gamepad'].includes(nextMode)) nextMode = 'mouse';
     if (mode === 'gamepad' && nextMode !== 'gamepad' && immersiveActive()) setPadImmersive(false);
-    if (mode && mode !== nextMode) releaseDragOnLeave();
+    if (mode && mode !== nextMode) { releaseDragOnLeave(); cancelAllGestures(); }
     mode = nextMode;
     storage.set('watchmouse_mode', mode);
     $('douyinPanel').hidden = mode !== 'douyin';
@@ -1107,6 +1170,7 @@
     cancelStatusTimer(); statusVersion++; statusCheckQueued = false;
     if (statusController) statusController.abort();
     releaseDragOnLeave(); discardInput('notConnected', true);
+    cancelAllGestures();
     if (speechListening && speech) speech.stop();
   }
   document.addEventListener('visibilitychange', () => {
@@ -1114,7 +1178,7 @@
     else checkConnection();
   });
   window.addEventListener('pagehide', suspendPage);
-  window.addEventListener('blur', releaseDragOnLeave);
+  window.addEventListener('blur', () => { releaseDragOnLeave(); cancelAllGestures(); });
   window.addEventListener('online', () => checkConnection());
   window.addEventListener('offline', () => { cancelStatusTimer(); statusVersion++; if (statusController) statusController.abort(); setConnection(false, 'networkOffline'); feedback(); });
   function syncViewport() {
@@ -1126,13 +1190,30 @@
     document.body.classList.toggle('compact-viewport', height < 400);
   }
   function viewportChanged() { releaseDragOnLeave(); syncViewport(); }
-  window.addEventListener('resize', viewportChanged);
-  window.addEventListener('orientationchange', viewportChanged);
+  let lastLayout = '';
+  function layoutChanged(force = false) {
+    // 只在宽高比真的变了（旋转屏幕 / 进出全屏）时复位手势；地址栏收起这类
+    // 纯高度变化不打断正在进行的拖动。orientationchange 一律强制复位。
+    const layout = (window.matchMedia && window.matchMedia('(orientation: portrait)').matches ? 'p' : 'l') + window.innerWidth;
+    if (!force && layout === lastLayout) return;
+    lastLayout = layout;
+    releaseDragOnLeave();
+    cancelAllGestures();
+  }
+  window.addEventListener('resize', () => { viewportChanged(); layoutChanged(); });
+  window.addEventListener('orientationchange', () => { viewportChanged(); layoutChanged(true); });
+  document.addEventListener('fullscreenchange', () => { releaseDragOnLeave(); cancelAllGestures(); });
+  // iOS 上有时只发 touchcancel / touchend，没有 pointercancel（旋转屏幕、系统
+  // 手势抢走触点都会这样）。所有手指都离开时统一收尾，避免控件卡在按下状态。
+  ['touchend', 'touchcancel'].forEach(name => window.addEventListener(name, event => {
+    if (!event || !event.touches || event.touches.length === 0) cancelAllGestures();
+  }, {passive: true, capture: true}));
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', viewportChanged);
     window.visualViewport.addEventListener('scroll', viewportChanged);
   }
   syncViewport();
+  layoutChanged();
   setMode(savedMode);
   applyLanguage();
   checkConnection();

@@ -437,6 +437,47 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
   elements.gamepadModeButton.click();
   await wait(); await wait(); await wait();
 
+  // Rotating the phone: browsers can drop the touch without a pointerup or
+  // pointercancel (iOS in landscape is the usual culprit). The pad trackpad
+  // must clear itself, or it stays "held" forever and stops responding.
+  records.length = 0;
+  padTrackpad.emit('pointerdown', {pointerId: 35, button: 0, clientX: 600, clientY: 200});
+  assert(padTrackpad.classList.contains('active'), 'the pad trackpad is held before rotating');
+  app.window.emit('orientationchange');
+  await wait();
+  assert(!padTrackpad.classList.contains('active'), 'rotating clears the stuck touch on the pad trackpad');
+  padTrackpad.emit('pointerdown', {pointerId: 36, button: 0, clientX: 600, clientY: 200});
+  padTrackpad.emit('pointermove', {pointerId: 36, clientX: 640, clientY: 210});
+  padTrackpad.emit('pointerup', {pointerId: 36, clientX: 640, clientY: 210});
+  await wait(); await wait(); await wait();
+  assert(records.some(packet => packet.command?.startsWith('M ')), 'the pad trackpad works again after rotating');
+
+  // A lost pointerup without any rotation must self-heal on the next touch too.
+  records.length = 0;
+  padTrackpad.emit('pointerdown', {pointerId: 37, button: 0, clientX: 600, clientY: 200});
+  padTrackpad.emit('pointerdown', {pointerId: 38, button: 0, clientX: 600, clientY: 200});
+  padTrackpad.emit('pointermove', {pointerId: 38, clientX: 630, clientY: 206});
+  padTrackpad.emit('pointerup', {pointerId: 38, clientX: 630, clientY: 206});
+  await wait(); await wait(); await wait();
+  assert(records.some(packet => packet.command?.startsWith('M ')), 'a lost pointerup does not lock the pad trackpad');
+  assert(!padTrackpad.classList.contains('active'), 'the pad trackpad ends up released');
+
+  // Same failure mode on the mouse touchpad: one stale finger used to turn
+  // every later drag into a two-finger scroll.
+  records.length = 0;
+  elements.mouseModeButton.click();
+  await wait();
+  elements.touchpad.emit('pointerdown', {pointerId: 39, pointerType: 'touch', clientX: 0, clientY: 0});
+  app.window.emit('orientationchange');
+  await wait();
+  elements.touchpad.emit('pointerdown', {pointerId: 40, pointerType: 'touch', clientX: 0, clientY: 0});
+  elements.touchpad.emit('pointermove', {pointerId: 40, clientX: 10, clientY: 4});
+  elements.touchpad.emit('pointerup', {pointerId: 40, clientX: 10, clientY: 4});
+  await wait(); await wait(); await wait();
+  assert(records.some(packet => packet.command?.startsWith('M ')), 'the mouse touchpad still moves the cursor after rotating');
+  elements.gamepadModeButton.click();
+  await wait(); await wait(); await wait();
+
   // Leaving gamepad mode while a button is down must not leave it stuck.
   records.length = 0;
   padButton('b').emit('pointerdown', {pointerId: 24, button: 0});

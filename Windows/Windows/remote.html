@@ -29,6 +29,8 @@
     <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2m-7 9v3m-4 0h8"/></symbol>
     <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="3" fill="currentColor" stroke="none"/></symbol>
     <symbol id="i-watch" viewBox="0 0 24 24"><rect x="5" y="6" width="14" height="12" rx="4"/><path d="m8 6 1-4h6l1 4m-8 12 1 4h6l1-4m-4-9v3l2 1"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24"><path d="M9 4H4v5m11-5h5v5M9 20H4v-5m11 5h5v-5"/></symbol>
+    <symbol id="i-compress" viewBox="0 0 24 24"><path d="M4 9h5V4m11 5h-5V4M4 15h5v5m11-5h-5v5"/></symbol>
     <symbol id="i-gamepad" viewBox="0 0 24 24"><path d="M6.5 8h11a4.5 4.5 0 0 1 4.3 5.8l-1.2 4A3.5 3.5 0 0 1 17 20h-2.2a2 2 0 0 1-1.7-1l-.6-1a2 2 0 0 0-1.7-1h-.6a2 2 0 0 0-1.7 1l-.6 1a2 2 0 0 1-1.7 1H7a3.5 3.5 0 0 1-3.6-2.2l-1.2-4A4.5 4.5 0 0 1 6.5 8Z"/><path d="M8 12v4m-2-2h4"/><circle cx="15.2" cy="12.2" r=".9" fill="currentColor" stroke="none"/><circle cx="17.8" cy="14.2" r=".9" fill="currentColor" stroke="none"/><circle cx="15.2" cy="16.2" r=".9" fill="currentColor" stroke="none"/><circle cx="12.6" cy="14.2" r=".9" fill="currentColor" stroke="none"/></symbol>
   </defs></svg>
   <div class="app-shell">
@@ -39,39 +41,47 @@
         <button type="button" data-key="down" class="douyin-next" aria-label="下一个视频" data-i18n-aria="nextVideo"><svg class="icon " viewBox="0 0 24 24" aria-hidden="true"><use href="#i-down"/></svg></button>
       </section>
       <section id="gamepadPanel" class="gamepad-panel" hidden aria-label="手柄控制" data-i18n-aria="gamepadControls" data-layout="xbox">
-        <div class="gamepad-toolbar">
+        <div class="pad-hud">
           <div class="layout-switcher" role="group" aria-label="手柄布局" data-i18n-aria="gamepadLayout">
             <button id="xboxLayoutButton" type="button" data-layout="xbox" aria-pressed="true">Xbox</button>
             <button id="psLayoutButton" type="button" data-layout="ps" aria-pressed="false">PlayStation</button>
           </div>
           <p class="gamepad-hint" data-i18n="gamepadHint">按键映射为键盘，适合支持键鼠的游戏</p>
+          <button id="padFullscreenButton" class="pad-fullscreen" type="button" aria-pressed="false" aria-label="全屏横屏游玩" data-i18n-aria="padFullscreen">
+            <svg class="icon expand-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-expand"/></svg>
+            <svg class="icon compress-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-compress"/></svg>
+          </button>
         </div>
-        <div class="gamepad-body">
-          <div class="gamepad-shoulders">
-            <button type="button" class="shoulder" data-pad="lt" aria-label="LT"><span class="xbox-label">LT</span><span class="ps-label">L2</span></button>
-            <button type="button" class="shoulder" data-pad="lb" aria-label="LB"><span class="xbox-label">LB</span><span class="ps-label">L1</span></button>
-            <button type="button" class="shoulder" data-pad="rb" aria-label="RB"><span class="xbox-label">RB</span><span class="ps-label">R1</span></button>
-            <button type="button" class="shoulder" data-pad="rt" aria-label="RT"><span class="xbox-label">RT</span><span class="ps-label">R2</span></button>
-          </div>
-          <div class="gamepad-meta">
-            <button type="button" class="meta-button" data-pad="select" aria-label="Select"><span class="xbox-label">View</span><span class="ps-label">Share</span></button>
-            <button type="button" class="meta-button" data-pad="start" aria-label="Start"><span class="xbox-label">Menu</span><span class="ps-label">Options</span></button>
-          </div>
-          <div class="gamepad-controls">
-            <div class="stick" data-stick="left" aria-label="左摇杆" data-i18n-aria="leftStick"><span class="stick-knob"></span></div>
+        <div class="pad-shoulders">
+          <button type="button" class="shoulder shoulder-trigger" data-pad="lt" aria-label="LT"><span class="xbox-label">LT</span><span class="ps-label">L2</span></button>
+          <button type="button" class="shoulder" data-pad="lb" aria-label="LB"><span class="xbox-label">LB</span><span class="ps-label">L1</span></button>
+          <span class="pad-shoulder-spacer" aria-hidden="true"></span>
+          <button type="button" class="shoulder" data-pad="rb" aria-label="RB"><span class="xbox-label">RB</span><span class="ps-label">R1</span></button>
+          <button type="button" class="shoulder shoulder-trigger" data-pad="rt" aria-label="RT"><span class="xbox-label">RT</span><span class="ps-label">R2</span></button>
+        </div>
+        <div class="pad-field">
+          <div class="pad-grip pad-grip-left">
+            <div class="stick" data-stick="left" aria-label="左摇杆" data-i18n-aria="leftStick"><span class="stick-ring" aria-hidden="true"></span><span class="stick-knob"></span></div>
             <div class="dpad" aria-label="方向键" data-i18n-aria="dpad">
               <button type="button" data-pad="dup" class="dpad-up" aria-label="上">▲</button>
               <button type="button" data-pad="dleft" class="dpad-left" aria-label="左">◀</button>
               <button type="button" data-pad="dright" class="dpad-right" aria-label="右">▶</button>
               <button type="button" data-pad="ddown" class="dpad-down" aria-label="下">▼</button>
             </div>
+          </div>
+          <div class="pad-meta">
+            <button type="button" class="meta-button" data-pad="select" aria-label="Select"><span class="xbox-label">View</span><span class="ps-label">Share</span></button>
+            <p class="pad-rotate-hint" data-i18n="padRotateHint">横屏握持更顺手</p>
+            <button type="button" class="meta-button" data-pad="start" aria-label="Start"><span class="xbox-label">Menu</span><span class="ps-label">Options</span></button>
+          </div>
+          <div class="pad-grip pad-grip-right">
             <div class="face-buttons" aria-label="功能键" data-i18n-aria="faceButtons">
               <button type="button" data-pad="y" class="face-y" aria-label="Y"><span class="xbox-label">Y</span><span class="ps-label">△</span></button>
               <button type="button" data-pad="x" class="face-x" aria-label="X"><span class="xbox-label">X</span><span class="ps-label">□</span></button>
               <button type="button" data-pad="b" class="face-b" aria-label="B"><span class="xbox-label">B</span><span class="ps-label">○</span></button>
               <button type="button" data-pad="a" class="face-a" aria-label="A"><span class="xbox-label">A</span><span class="ps-label">✕</span></button>
             </div>
-            <div class="stick" data-stick="right" aria-label="右摇杆" data-i18n-aria="rightStick"><span class="stick-knob"></span></div>
+            <div class="stick" data-stick="right" aria-label="右摇杆" data-i18n-aria="rightStick"><span class="stick-ring" aria-hidden="true"></span><span class="stick-knob"></span></div>
           </div>
         </div>
       </section>

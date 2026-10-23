@@ -340,6 +340,29 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
   assert.equal(createApp('gamepad', {}, {stored: new Map([['watchmouse_pad_layout', 'ps']])}).elements.gamepadPanel.dataset.layout, 'ps', 'chosen layout persists across reloads');
 
   const padButton = name => document.querySelectorAll('#gamepadPanel [data-pad]').find(button => button.dataset.pad === name);
+
+  // Layout follows a real controller: shoulders in the two top corners, thumb
+  // stacks hugging the bottom edges, View/Menu parked out of thumb reach.
+  for (const shoulder of ['lt', 'lb', 'rb', 'rt']) {
+    assert(padButton(shoulder), 'shoulder ' + shoulder + ' has a button');
+  }
+  assert(padButton('select') && padButton('start'), 'Select and Start exist');
+  assert(document.querySelector('#gamepadPanel .pad-grip-left') && document.querySelector('#gamepadPanel .pad-grip-right'),
+    'left and right thumb grips are separate groups');
+  assert(document.querySelector('#gamepadPanel .pad-shoulders') && document.querySelector('#gamepadPanel .pad-field'),
+    'shoulder row and thumb field are laid out separately');
+
+  // Immersive mode: one button toggles the fullscreen class, and leaving the
+  // gamepad tab drops it again so the browse views keep their chrome.
+  const fullscreenButton = document.getElementById('padFullscreenButton');
+  assert(fullscreenButton, 'fullscreen button is present');
+  fullscreenButton.emit('click');
+  assert(document.body.classList.contains('pad-immersive'), 'fullscreen button enters immersive mode');
+  assert.equal(fullscreenButton.attributes['aria-pressed'], 'true');
+  await wait();
+  fullscreenButton.emit('click');
+  assert(!document.body.classList.contains('pad-immersive'), 'fullscreen button exits immersive mode');
+
   records.length = 0;
   padButton('a').emit('pointerdown', {pointerId: 21, button: 0});
   assert(padButton('a').classList.contains('is-pressed'));
@@ -384,6 +407,7 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
   assert(elements.gamepadPanel.hidden && !elements.mousePanel.hidden);
   assert(records.some(packet => packet.command === 'MU'), 'leaving gamepad mode queues a release for held keys');
   assert(!padButton('b').classList.contains('is-pressed'));
+  assert(!document.body.classList.contains('pad-immersive'), 'leaving the pad tab also leaves immersive mode');
 
 // Native pad mode: a receiver with ViGEmBus reports nativeGamepad, so the
   // gamepad panel posts controller snapshots instead of mapped keystrokes.

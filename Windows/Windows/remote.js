@@ -12,6 +12,7 @@
       videoControls: 'Video controls', previousVideo: 'Previous video', playPause: 'Play or pause', nextVideo: 'Next video',
       gamepadControls: 'Gamepad controls', gamepadLayout: 'Gamepad layout', gamepadHint: 'Buttons map to keyboard keys for games that support them',
       gamepadHintNative: 'Native mode: the computer sees an Xbox controller',
+      padFullscreen: 'Fullscreen landscape', padRotateHint: 'Turn the phone sideways for a better grip',
       leftStick: 'Left stick', rightStick: 'Right stick', dpad: 'D-pad', faceButtons: 'Face buttons',
       mouseControls: 'Mouse controls', touchpad: 'Touchpad: move with one finger, tap to click, scroll with two fingers',
       leftClick: 'Left click', rightClick: 'Right click', dragOff: 'Drag: hold the left mouse button',
@@ -41,6 +42,7 @@
       videoControls: '视频遥控', previousVideo: '上一个视频', playPause: '播放或暂停', nextVideo: '下一个视频',
       gamepadControls: '手柄控制', gamepadLayout: '手柄布局', gamepadHint: '按键映射为键盘，适合支持键鼠的游戏',
       gamepadHintNative: '原生模式：电脑已识别为 Xbox 手柄',
+      padFullscreen: '全屏横屏游玩', padRotateHint: '横屏握持更顺手',
       leftStick: '左摇杆', rightStick: '右摇杆', dpad: '方向键', faceButtons: '功能键',
       mouseControls: '鼠标控制', touchpad: '触控板：单指移动，轻点单击，双指滚动', leftClick: '鼠标左键', rightClick: '鼠标右键',
       dragOff: '拖动，点击按住左键', dragOn: '拖动已开启，点击松开左键', scroll: '滚轮', scrollUp: '向上滚动', scrollDown: '向下滚动',
@@ -574,6 +576,10 @@
   const stickPointers = new Map();
   const stickHeld = {left: new Set(), right: new Set()};
   const stickAxes = {left: {x: 0, y: 0}, right: {x: 0, y: 0}};
+  // A thumb resting on the ring drifts a little; ignore that much travel.
+  const STICK_DEADZONE = 0.16;
+  // Keyboard mapping needs a firmer push so a rolling thumb does not chatter.
+  const STICK_KEY_THRESHOLD = 0.42;
   let gamepadLayout = storage.get('watchmouse_pad_layout') === 'ps' ? 'ps' : 'xbox';
   // Declared with var so the early language pass can read it safely.
   var padNative = false;
@@ -709,7 +715,7 @@
   function keysFromStick(side, nx, ny) {
     const map = STICK_KEYS[side];
     const next = new Set();
-    const dead = 0.32;
+    const dead = STICK_KEY_THRESHOLD;
     if (ny <= -dead) next.add(map.up);
     if (ny >= dead) next.add(map.down);
     if (nx <= -dead) next.add(map.left);
@@ -788,12 +794,15 @@
     function moveStick(event) {
       if (!stickPointers.has(event.pointerId)) return;
       const rect = stick.getBoundingClientRect();
+      // Travel is measured from the ring centre: the knob can reach the rim
+      // without the finger leaving the circle.
       const radius = Math.min(rect.width, rect.height) / 2;
       let nx = (event.clientX - (rect.left + radius)) / radius;
       let ny = (event.clientY - (rect.top + radius)) / radius;
       const magnitude = Math.hypot(nx, ny);
       if (magnitude > 1) { nx /= magnitude; ny /= magnitude; }
-      if (knob) knob.style.transform = 'translate(calc(-50% + ' + (nx * 28) + '%), calc(-50% + ' + (ny * 28) + '%))';
+      if (magnitude < STICK_DEADZONE) { nx = 0; ny = 0; }
+      if (knob) knob.style.transform = 'translate(calc(-50% + ' + (nx * 34) + '%), calc(-50% + ' + (ny * 34) + '%))';
       setStickInput(side, nx, ny);
     }
     function endStick(event) {
@@ -813,8 +822,60 @@
     node.addEventListener('pointerdown', event => event.preventDefault());
   });
 
+  // Fullscreen + landscape lock puts the grips under the thumbs and hides the
+  // browser chrome. iOS Safari cannot lock orientation, so the CSS layout and
+  // the rotate hint carry that case.
+  function immersiveActive() {
+    return document.body.classList.contains('pad-immersive');
+  }
+  function setPadImmersive(on) {
+    const shell = document.querySelector('.app-shell');
+    document.body.classList.toggle('pad-immersive', on);
+    const button = $('padFullscreenButton');
+    if (button) button.setAttribute('aria-pressed', String(on));
+    try {
+      if (on) {
+        const request = shell && (shell.requestFullscreen || shell.webkitRequestFullscreen);
+        if (request) {
+          const pending = request.call(shell, {navigationUI: 'hide'});
+          if (pending && pending.catch) pending.catch(() => {});
+        }
+        if (typeof screen !== 'undefined' && screen.orientation && screen.orientation.lock) {
+          const locked = screen.orientation.lock('landscape');
+          if (locked && locked.catch) locked.catch(() => {});
+        }
+      } else {
+        if (typeof screen !== 'undefined' && screen.orientation && screen.orientation.unlock) {
+          try { screen.orientation.unlock(); } catch (_) {}
+        }
+        if (document.fullscreenElement || document.webkitFullscreenElement) {
+          const exit = document.exitFullscreen || document.webkitExitFullscreen;
+          if (exit) exit.call(document);
+        }
+      }
+    } catch (_) {}
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof setTimeout === 'function') {
+      setTimeout(() => {
+        try { window.dispatchEvent(new Event('resize')); } catch (_) {}
+      }, 120);
+    }
+  }
+  if ($('padFullscreenButton')) {
+    $('padFullscreenButton').addEventListener('click', () => setPadImmersive(!immersiveActive()));
+  }
+  document.querySelectorAll('.pad-rotate-hint').forEach(node => {
+    node.addEventListener('click', () => setPadImmersive(true));
+  });
+  ['fullscreenchange', 'webkitfullscreenchange'].forEach(name => {
+    document.addEventListener(name, () => {
+      const active = document.fullscreenElement || document.webkitFullscreenElement;
+      if (!active && immersiveActive()) setPadImmersive(false);
+    });
+  });
+
   function setMode(nextMode, focusInput = false) {
     if (!['douyin', 'mouse', 'keyboard', 'gamepad'].includes(nextMode)) nextMode = 'mouse';
+    if (mode === 'gamepad' && nextMode !== 'gamepad' && immersiveActive()) setPadImmersive(false);
     if (mode && mode !== nextMode) releaseDragOnLeave();
     mode = nextMode;
     storage.set('watchmouse_mode', mode);

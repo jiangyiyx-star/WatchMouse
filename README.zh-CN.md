@@ -6,9 +6,9 @@
 
 电脑打开接收器，手机连同一个 Wi-Fi，扫码即可控制当前选中的窗口。无需手机 App、账号或云端中转。
 
-## 2.6 性能更新
+## 2.7 手柄更新
 
-手机与 Windows 接收器采用红黑配色。连续输入复用 HTTP 连接，减少鼠标运动排队延迟；电脑窗口的网络地址扫描改为后台执行。保留已有配对、语言选择和 Mac 支持。[性能检查与测量范围](docs/performance.md)。
+手机新增手柄页面，Xbox 与 PlayStation 两套布局一键切换，按键按真实手柄的握持位置摆放。按住即生效、松手就释放，左右握把之间的接缝处有触控板，横屏可点右上角全屏。键盘输入改为硬件扫描码注入，读取原始输入的游戏也能收到。Windows 上可另装 ViGEmBus 驱动，让游戏识别为真正的手柄。2.6 的红黑界面、连接复用、配对、语言选择和 Mac 支持均保留。
 
 ## 界面截图
 
@@ -24,8 +24,8 @@
 
 ## 下载与使用
 
-- Windows：[WatchMouse-2.6.exe](https://github.com/jiangyiyx-star/WatchMouse/releases/download/v2.6/WatchMouse-2.6.exe)。双击启动，首次连接按提示允许专用网络访问。
-- Apple 芯片 Mac：[WatchMouse-Mac-2.4-arm64.zip](https://github.com/jiangyiyx-star/WatchMouse/releases/download/v2.4/WatchMouse-Mac-2.4-arm64.zip)。解压后放进“应用程序”，在系统设置中启用 WatchMouse 的辅助功能权限。
+- Windows：[WatchMouse-2.7.exe](https://github.com/jiangyiyx-star/WatchMouse/releases/download/v2.7/WatchMouse-2.7.exe)。双击启动，首次连接按提示允许专用网络访问。
+- Apple 芯片 Mac：[WatchMouse-Mac-2.7-arm64.zip](https://github.com/jiangyiyx-star/WatchMouse/releases/download/v2.7/WatchMouse-Mac-2.7-arm64.zip)。解压后放进“应用程序”，在系统设置中启用 WatchMouse 的辅助功能权限。
 
 安装包自带运行环境，不用安装 Python。Mac 下载包支持 macOS 11 及以上，Intel 包尚未验证。Mac 为自签名构建，尚未经过 Apple 公证；首次启动若被阻止，需在隐私与安全设置中确认来源后选择“仍要打开”。
 

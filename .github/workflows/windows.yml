@@ -42,7 +42,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Build failed in Unicode source path.' }
           $output = Join-Path $env:GITHUB_WORKSPACE 'Windows\Windows\dist'
           New-Item -ItemType Directory -Path $output -Force | Out-Null
-          Copy-Item -LiteralPath (Join-Path $unicodeRoot 'Windows\Windows\dist\WatchMouse-2.6.exe') -Destination $output -Force
+          Copy-Item -LiteralPath (Join-Path $unicodeRoot 'Windows\Windows\dist\WatchMouse-2.7.exe') -Destination $output -Force
       - name: Prepare full-size CI display for the native screenshot
         run: python tools/set_ci_display.py
       - name: Launch packaged desktop demo
@@ -50,7 +50,7 @@ jobs:
         run: |
           $demoPath = Join-Path $env:GITHUB_WORKSPACE 'docs\screenshots\windows-desktop.png'
           New-Item -ItemType Directory -Path (Split-Path -Parent $demoPath) -Force | Out-Null
-          $appPath = Join-Path $env:GITHUB_WORKSPACE 'Windows\Windows\dist\WatchMouse-2.6.exe'
+          $appPath = Join-Path $env:GITHUB_WORKSPACE 'Windows\Windows\dist\WatchMouse-2.7.exe'
           $demo = Start-Process -FilePath $appPath -ArgumentList @('--demo', '--language', 'en', '--screenshot', ('"' + $demoPath + '"')) -WindowStyle Hidden -PassThru -Wait
           if ($demo.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $demoPath)) { throw 'Packaged desktop demo failed to launch or capture.' }
       - name: Restore CI display

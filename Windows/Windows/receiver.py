@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from input_control import InputController, elevated
 import pad_control
 
-PORT, VERSION = 53514, "2.6"
+PORT, VERSION = 53514, "2.7"
 ASSETS = {"/": ("remote.html", "text/html"), "/remote.html": ("remote.html", "text/html"),
           "/remote.js": ("remote.js", "text/javascript"), "/remote.css": ("remote.css", "text/css"),
           "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),

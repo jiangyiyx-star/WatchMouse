@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.7 — 2026-10-23
 
 - Phone gamepad mode with switchable Xbox and PlayStation layouts: dual sticks, d-pad, ABXY/△○□✕, shoulders, and View/Menu.
 - Held buttons and sticks keep the mapped key down while pressed, release on lift, and free everything when you leave the mode, hide the page, or the phone stops sending.

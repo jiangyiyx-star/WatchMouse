@@ -11,9 +11,9 @@
 
 Open the desktop receiver, scan its QR code with your phone, and control the focused app over your local Wi-Fi. No phone app or account is required.
 
-## 2.6 performance update
+## 2.7 gamepad update
 
-The Windows receiver and phone controls use a red/black interface. This release reuses HTTP connections for continuous input, reduces motion-queue delay, and discovers network addresses without blocking the Windows window. Existing pairing, saved languages, and Mac support are retained. See [performance checks](docs/performance.md) for measurements and limits.
+This release adds a phone gamepad panel with switchable Xbox and PlayStation layouts, laid out the way a real controller sits in your hands. Buttons hold down while pressed and release on lift, a trackpad sits in the seam between the grips, and landscape phones get a fullscreen button. Keyboard input is now injected as hardware scancodes so games that read raw input react. On Windows you can install the optional ViGEmBus driver to let games see a real Xbox 360 controller. The 2.6 red/black interface, connection reuse, pairing, saved languages, and Mac support are unchanged.
 
 ## Screenshots
 
@@ -31,8 +31,8 @@ Screenshots show the actual interface using demo data. The displayed demo QR cod
 
 | Platform | Download | First start |
 | --- | --- | --- |
-| Windows | [WatchMouse-2.6.exe](https://github.com/jiangyiyx-star/WatchMouse/releases/download/v2.6/WatchMouse-2.6.exe) | Open the EXE. Allow its connection on your trusted private network if prompted. |
-| Apple silicon Mac | [WatchMouse-Mac-2.4-arm64.zip](https://github.com/jiangyiyx-star/WatchMouse/releases/download/v2.4/WatchMouse-Mac-2.4-arm64.zip) | Unzip and move WatchMouse to Applications. Enable its Accessibility permission in System Settings. |
+| Windows | [WatchMouse-2.7.exe](https://github.com/jiangyiyx-star/WatchMouse/releases/download/v2.7/WatchMouse-2.7.exe) | Open the EXE. Allow its connection on your trusted private network if prompted. |
+| Apple silicon Mac | [WatchMouse-Mac-2.7-arm64.zip](https://github.com/jiangyiyx-star/WatchMouse/releases/download/v2.7/WatchMouse-Mac-2.7-arm64.zip) | Unzip and move WatchMouse to Applications. Enable its Accessibility permission in System Settings. |
 
 Desktop builds include Python and the web UI. You do not need to install Python to use them. The Mac download targets Apple silicon and macOS 11 or later; an Intel Mac build has not been validated. These builds are not commercially code-signed; the Mac app is ad-hoc signed and not Apple-notarized.
 

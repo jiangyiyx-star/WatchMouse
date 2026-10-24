@@ -11,6 +11,7 @@ from PyInstaller.archive.readers import CArchiveReader
 ROOT = Path(__file__).resolve().parent
 REPOSITORY_ROOT = ROOT.parents[1]
 LICENSE_NOTICES = ("LICENSE", "THIRD_PARTY_LICENSES.txt")
+SOURCE_MODULES = ("receiver", "input_control", "pad_control", "app")
 ASSET_PATTERNS = (
     "remote.html", "remote.js", "remote.css", "app.ico", "manifest*.json",
     "*.webmanifest", "icon*.svg", "icon*.png", "sw.js", "service-worker.js",
@@ -41,7 +42,7 @@ def compare_code(bundled: types.CodeType, current: types.CodeType, location: str
 def verify(executable: Path):
     archive = CArchiveReader(str(executable))
     modules = archive.open_embedded_archive("PYZ.pyz")
-    for name in ("receiver", "input_control", "app"):
+    for name in SOURCE_MODULES:
         bundled = marshal.loads(archive.extract("app")) if name == "app" else modules.extract(name)
         source = (ROOT / f"{name}.py").read_text(encoding="utf-8-sig")
         current = compile(source, bundled.co_filename, "exec", dont_inherit=True)
@@ -57,7 +58,7 @@ def verify(executable: Path):
             raise RuntimeError(f"Missing bundled asset: {path.name}")
         if archive.extract(path.name) != path.read_bytes():
             raise RuntimeError(f"Stale bundled asset: {path.name}")
-    print(f"Verified current source (3 modules) and {len(assets)} bundled assets.")
+    print(f"Verified current source ({len(SOURCE_MODULES)} modules) and {len(assets)} bundled assets.")
 
 
 def main():

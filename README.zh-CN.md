@@ -6,9 +6,11 @@
 
 电脑打开接收器，手机连同一个 Wi-Fi，扫码即可控制当前选中的窗口。无需手机 App、账号或云端中转。
 
-## 2.7 手柄更新
+## 2.8 多人独立手柄
 
-手机新增手柄页面，Xbox 与 PlayStation 两套布局一键切换，按键按真实手柄的握持位置摆放。按住即生效、松手就释放，左右握把之间的接缝处有触控板，横屏可点右上角全屏。键盘输入改为硬件扫描码注入，读取原始输入的游戏也能收到。Windows 上可另装 ViGEmBus 驱动，让游戏识别为真正的手柄。2.6 的红黑界面、连接复用、配对、语言选择和 Mac 支持均保留。
+Windows 已配置原生手柄支持时，每台手机可以使用独立的 Xbox 360 手柄。最多四个活跃的手机网页自动分配 WatchMouse 的 P1–P4 席位。Xbox / PlayStation 两套按钮布局、中央触控板、横屏全屏以及键鼠功能继续保留。
+
+![手机手柄独立席位](docs/screenshots/phone-gamepad-v28.jpg)
 
 ## 界面截图
 
@@ -24,7 +26,7 @@
 
 ## 下载与使用
 
-- Windows：[WatchMouse-2.7.exe](https://github.com/jiangyiyx-star/WatchMouse/releases/download/v2.7/WatchMouse-2.7.exe)。双击启动，首次连接按提示允许专用网络访问。
+- Windows：[最新 Windows 发布版](https://github.com/jiangyiyx-star/WatchMouse/releases/latest)。双击启动，首次连接按提示允许专用网络访问。
 - Apple 芯片 Mac：[WatchMouse-Mac-2.7-arm64.zip](https://github.com/jiangyiyx-star/WatchMouse/releases/download/v2.7/WatchMouse-Mac-2.7-arm64.zip)。解压后放进“应用程序”，在系统设置中启用 WatchMouse 的辅助功能权限。
 
 安装包自带运行环境，不用安装 Python。Mac 下载包支持 macOS 11 及以上，Intel 包尚未验证。Mac 为自签名构建，尚未经过 Apple 公证；首次启动若被阻止，需在隐私与安全设置中确认来源后选择“仍要打开”。
@@ -38,14 +40,20 @@
 
 ### Windows 原生手柄（可选）
 
-默认情况下，手柄页面把按键映射为键盘，接收器不需要任何依赖。想玩只认手柄的游戏时，装一次 [ViGEmBus 驱动](https://github.com/nefarius/ViGEmBus/releases)，再执行 `pip install vgamepad`，游戏里就会看到真正的手柄。重启 WatchMouse 后手机自动识别并切换到原生模式，手柄页下方会出现提示；卸载驱动即退回键鼠映射。macOS 没有等价的虚拟 HID 通道，Mac 接收器始终使用键鼠映射。
+原生模式需要电脑已配置 [ViGEmBus 驱动](https://github.com/nefarius/ViGEmBus/releases)和 [vgamepad 库](https://github.com/yannbouteiller/vgamepad)，配置后重启 WatchMouse 即可；已配置的电脑可以直接复用。EXE 不会自动安装驱动。缺少原生支持时使用键盘映射，键盘映射不能变成多人独立手柄。Mac 接收器继续使用键盘映射，不提供多人原生 Xbox 手柄。
+
+1. 所有手机和 Windows 电脑连同一个 Wi-Fi，各自在浏览器扫描接收器二维码。
+2. 每台手机打开**手柄**模式；原生模式会为活跃网页自动分配独立的 P1–P4 席位。
+3. 先连接齐玩家，再启动支持本地多人的游戏；游戏要求时，各自按 A 加入，具体加入方式以游戏为准。
+
+退出手柄模式或网页进入后台时会释放控制。活跃网页即使没有操作，也会发送中立心跳保留席位，不会按住任何按钮；断连会话过期后释放席位。P1–P4 是 WatchMouse 席位，不保证等于游戏中的玩家编号。Windows 的 [XInput 总共只有四个控制器槽位](https://learn.microsoft.com/zh-cn/windows/win32/xinput/getting-started-with-xinput)，实体 Xbox 手柄和其他虚拟手柄也占用这些槽位。游戏必须原生支持本地多人及对应人数；Steam 能识别手柄不代表游戏自动支持多人。参见 [Valve 的本地多人说明](https://partner.steamgames.com/doc/features/remoteplay)。
 
 ## 功能
 
 - **鼠标**：单指移动、轻点单击、左右键、拖动开关、双指滚动和独立单指滚动带。
 - **键鼠**：用手机输入法编辑草稿，确认后发送到电脑，支持中文、emoji、粘贴和输入法语音转文字。
 - **视频**：上一个、播放/暂停、下一个大按钮，适用于支持方向键/空格键的应用。
-- **手柄**：按真实手柄的位置摆放——肩键在两上角，左摇杆在十字键上方（Xbox）或下方（PlayStation），动作键在右摇杆上方，View/Menu 放中间不挡拇指，屏幕中央的接缝处是触控板（拖动移动、轻点左键、长按右键），游戏里也能随时控制光标。手机横过来点右上角全屏按钮可隐藏浏览器和底部栏、锁定横屏；Xbox / PlayStation 布局一键切换。按住即生效、松手就释放。默认映射为键盘，并以硬件扫描码注入，读原始输入的游戏也能收到；游戏若以管理员身份启动，接收器也要用管理员身份运行；Windows 上装了可选的 ViGEmBus 驱动后自动切为原生模式，电脑识别为 Xbox 360 手柄。
+- **手柄**：按真实手柄的位置摆放——肩键在两上角，左摇杆在十字键上方（Xbox）或下方（PlayStation），动作键在右摇杆上方，View/Menu 放中间不挡拇指，屏幕中央的接缝处是触控板（拖动移动、轻点左键、长按右键），游戏里也能随时控制光标。手机横过来点右上角全屏按钮可隐藏浏览器和底部栏、锁定横屏；Xbox / PlayStation 布局一键切换。按住即生效、松手就释放。默认映射为键盘，并以硬件扫描码注入，读原始输入的游戏也能收到；游戏若以管理员身份启动，接收器也要用管理员身份运行；Windows 上配置可选的 ViGEmBus 驱动及匹配的 vgamepad 库后自动切为原生模式，电脑识别为 Xbox 360 手柄。
 - **语言**：手机、Mac 和 Windows 界面默认英文，可选择简体中文并保存选择。
 - **Mac 快捷键**：协议中的 Ctrl/Win 映射为 Command，Alt 映射为 Option。
 - **手表**：提供不用 JavaScript 的 `/watch` 简版，实体 Apple Watch 兼容性尚未实测。

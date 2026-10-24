@@ -13,6 +13,7 @@ import statistics
 import sys
 import threading
 import time
+from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from input_control import InputController
@@ -33,7 +34,8 @@ def run(requests, protocol, buffered, no_delay):
             super().process_request(request, client_address)
 
     server = BenchmarkServer(("127.0.0.1", 0), "benchmark-token",
-                             InputController(sender=lambda items: None))
+                             InputController(sender=lambda items: None),
+                             pad=Mock(available=False, error="Native pad disabled in benchmark"))
     server.RequestHandlerClass = BenchmarkHandler
     worker = threading.Thread(target=server.serve_forever,
                               kwargs={"poll_interval": 0.01}, daemon=True)

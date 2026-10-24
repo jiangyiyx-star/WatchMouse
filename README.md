@@ -11,9 +11,11 @@
 
 Open the desktop receiver, scan its QR code with your phone, and control the focused app over your local Wi-Fi. No phone app or account is required.
 
-## 2.7 gamepad update
+## 2.8 multiplayer gamepads
 
-This release adds a phone gamepad panel with switchable Xbox and PlayStation layouts, laid out the way a real controller sits in your hands. Buttons hold down while pressed and release on lift, a trackpad sits in the seam between the grips, and landscape phones get a fullscreen button. Keyboard input is now injected as hardware scancodes so games that read raw input react. On Windows you can install the optional ViGEmBus driver to let games see a real Xbox 360 controller. The 2.6 red/black interface, connection reuse, pairing, saved languages, and Mac support are unchanged.
+On Windows with native gamepad support configured, each phone can now have its own Xbox 360 controller. Up to four active phone browsers receive WatchMouse seats P1–P4 automatically. Xbox and PlayStation button layouts, the central trackpad, fullscreen controls, and the mouse and keyboard modes remain available.
+
+![Phone gamepad with an independent player seat](docs/screenshots/phone-gamepad-v28.jpg)
 
 ## Screenshots
 
@@ -31,7 +33,7 @@ Screenshots show the actual interface using demo data. The displayed demo QR cod
 
 | Platform | Download | First start |
 | --- | --- | --- |
-| Windows | [WatchMouse-2.7.exe](https://github.com/jiangyiyx-star/WatchMouse/releases/download/v2.7/WatchMouse-2.7.exe) | Open the EXE. Allow its connection on your trusted private network if prompted. |
+| Windows | [Latest Windows release](https://github.com/jiangyiyx-star/WatchMouse/releases/latest) | Open the EXE. Allow its connection on your trusted private network if prompted. |
 | Apple silicon Mac | [WatchMouse-Mac-2.7-arm64.zip](https://github.com/jiangyiyx-star/WatchMouse/releases/download/v2.7/WatchMouse-Mac-2.7-arm64.zip) | Unzip and move WatchMouse to Applications. Enable its Accessibility permission in System Settings. |
 
 Desktop builds include Python and the web UI. You do not need to install Python to use them. The Mac download targets Apple silicon and macOS 11 or later; an Intel Mac build has not been validated. These builds are not commercially code-signed; the Mac app is ad-hoc signed and not Apple-notarized.
@@ -45,14 +47,20 @@ Desktop builds include Python and the web UI. You do not need to install Python 
 
 ### Native gamepad on Windows (optional)
 
-By default the gamepad panel maps its buttons to keyboard keys, which keeps the receiver dependency-free. Install the [ViGEmBus driver](https://github.com/nefarius/ViGEmBus/releases) once and run `pip install vgamepad` to let games see a real Xbox 360 controller instead. Restart WatchMouse afterwards; the phone detects the backend from `/api/status` and switches to native mode on its own, with a hint under the pad. Uninstall the driver to fall back to key mapping. macOS has no equivalent virtual-HID path, so the Mac receiver always keeps the key mapping.
+Native mode requires an existing [ViGEmBus driver](https://github.com/nefarius/ViGEmBus/releases) and [vgamepad binding](https://github.com/yannbouteiller/vgamepad). Restart WatchMouse after those dependencies are configured; already configured computers can reuse them. The EXE does not install a driver automatically. Without native support, buttons use a keyboard mapping, which cannot provide independent multiplayer controllers. The Mac receiver continues to use keyboard mapping and does not provide native multiplayer Xbox controllers.
+
+1. Connect everyone's phone and the Windows computer to the same Wi-Fi, then scan the receiver's QR code on each phone.
+2. Open **Gamepad** mode on each phone. Native mode assigns each active browser a separate P1–P4 seat.
+3. Connect all players before launching a game with local multiplayer support. Join using each controller's A button if the game asks for it; the joining method depends on the game.
+
+Leaving gamepad mode or hiding the page releases its controls. An active neutral page sends a heartbeat to keep its seat without holding any button. Disconnected sessions release their seats when the lease expires (up to 15 seconds if leave delivery fails). P1–P4 are WatchMouse seats, so they need not match the game's player numbers. Windows [XInput has four controller slots in total](https://learn.microsoft.com/en-us/windows/win32/xinput/getting-started-with-xinput), shared with physical Xbox controllers and other virtual controllers. A game must support local multiplayer and the requested player count; Steam recognition alone does not add multiplayer support. See [Valve's local multiplayer explanation](https://partner.steamgames.com/doc/features/remoteplay).
 
 ## What it does
 
 - **Mouse:** one-finger movement, tap to click, left/right buttons, drag toggle, two-finger scrolling, and a separate one-finger scroll strip.
 - **Keyboard:** draft text on your phone and send it when ready. Supports Chinese, emoji, phone IME, and keyboard dictation. Text and input events go to the focused desktop app.
 - **Video:** large previous, play/pause, and next buttons for apps that respond to arrow/space keys.
-- **Gamepad:** laid out like a real controller — shoulders in the top corners, left stick above the d-pad (Xbox) or below it (PlayStation), face buttons above the right stick, View/Menu in the middle out of thumb reach, the centre seam holds a trackpad (drag to move, tap to click, hold to right-click), so you can still aim a cursor mid-game. Turn the phone sideways and tap the fullscreen button to hide the browser chrome and lock the orientation. Xbox and PlayStation layouts switch in one tap. Buttons hold down while pressed and release on lift. Keys map to the keyboard and are injected as hardware scancodes, so games that read raw input still see them; if a game is launched as administrator, run the receiver as administrator too. On Windows with the optional ViGEmBus driver the phone switches to native mode and the computer sees a real Xbox 360 controller.
+- **Gamepad:** laid out like a real controller — shoulders in the top corners, left stick above the d-pad (Xbox) or below it (PlayStation), face buttons above the right stick, View/Menu in the middle out of thumb reach, the centre seam holds a trackpad (drag to move, tap to click, hold to right-click), so you can still aim a cursor mid-game. Turn the phone sideways and tap the fullscreen button to hide the browser chrome and lock the orientation. Xbox and PlayStation layouts switch in one tap. Buttons hold down while pressed and release on lift. Keys map to the keyboard and are injected as hardware scancodes, so games that read raw input still see them; if a game is launched as administrator, run the receiver as administrator too. On Windows with the optional ViGEmBus driver and a matching vgamepad binding the phone switches to native mode and the computer sees a real Xbox 360 controller.
 - **Language:** English by default, with saved Simplified Chinese selection on the phone and both desktop receivers.
 - **Mac shortcuts:** protocol Ctrl/Win modifiers map to Command; Alt maps to Option.
 - **Watch:** an experimental JavaScript-free `/watch` page. Physical Apple Watch compatibility has not been verified.

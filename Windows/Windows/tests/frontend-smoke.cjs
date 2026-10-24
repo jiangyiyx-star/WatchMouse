@@ -23,6 +23,45 @@ function movementTotal(app) {
     return [total[0] + x, total[1] + y];
   }, [0, 0]);
 }
+function createPadHub() {
+  const sessions = new Map(), requests = new Map(), revoked = new Set(), outputs = new Map(), calls = [];
+  let serial = 0;
+  const neutral = () => ({lx: 0, ly: 0, rx: 0, ry: 0, lt: 0, rt: 0, buttons: []});
+  const reply = (body, status = 200) => ({ok: status < 400, status, json: async () => body});
+  const error = code => reply({ok: false, errorCode: code}, code === 'gamepad_session_required' ? 400 : 409);
+  function leave(session) {
+    const item = sessions.get(session);
+    if (!item) return;
+    outputs.set(item.player, neutral()); sessions.delete(session); requests.delete(item.requestId); revoked.add(item.requestId);
+  }
+  function handle(url, packet) {
+    calls.push({url, packet});
+    if (url === '/api/pad/join') {
+      if (revoked.has(packet.requestId)) return error('gamepad_session_expired');
+      let item = sessions.get(requests.get(packet.requestId));
+      if (!item) {
+        const occupied = new Set([...sessions.values()].map(value => value.player));
+        const player = [1, 2, 3, 4].find(number => !occupied.has(number));
+        if (!player) return error('gamepad_full');
+        item = {session: 'session-' + ++serial, requestId: packet.requestId, player, seq: 0, pad: neutral()};
+        sessions.set(item.session, item); requests.set(item.requestId, item.session); outputs.set(player, neutral());
+      }
+      return reply({ok: true, session: item.session, player: item.player, maxPlayers: 4, leaseSeconds: 15});
+    }
+    if (url === '/api/pad/leave') {
+      if (packet.requestId) revoked.add(packet.requestId);
+      leave(packet.session || requests.get(packet.requestId));
+      return reply({ok: true});
+    }
+    if (!packet.session) return error('gamepad_session_required');
+    const item = sessions.get(packet.session);
+    if (!item) return error('gamepad_session_expired');
+    if (packet.seq <= item.seq) return reply({ok: true, stale: true, ignored: true});
+    item.seq = packet.seq; item.pad = packet.pad; outputs.set(item.player, packet.pad);
+    return reply({ok: true});
+  }
+  return {handle, calls, sessions, requests, outputs, expire: leave};
+}
 
 function createApp(savedMode = null, inputStatus = {}, options = {}) {
   let document;
@@ -193,7 +232,7 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
   const frames = new Map();
   let nextTimerId = 1, statusActive = 0, maxStatusActive = 0, statusFailure = null;
   let clockAdvance = 0, intervalCalls = 0;
-  let holdCommands = Boolean(options.holdCommands), holdStatus = Boolean(options.holdStatus);
+  let holdCommands = Boolean(options.holdCommands), holdStatus = Boolean(options.holdStatus), holdJoin = Boolean(options.holdJoin), holdPad = Boolean(options.holdPad);
   const pendingNetwork = [];
   function scheduleTimeout(callback, delay) {
     if (delay <= 100 && !options.manualMotion) return setTimeout(callback, delay);
@@ -210,13 +249,19 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
     if (!entry) return false;
     timers.delete(entry[0]); clockAdvance += entry[1].delay; entry[1].callback(); return true;
   }
+  function runTimer(delay, last = false) {
+    const entries = [...timers.entries()].filter(([, timer]) => timer.delay === delay);
+    const entry = last ? entries.at(-1) : entries[0];
+    if (!entry) return false;
+    timers.delete(entry[0]); clockAdvance += entry[1].delay; entry[1].callback(); return true;
+  }
   function releaseOneCommand() {
     const entry = pendingNetwork.find(request => request.kind === 'command');
     if (!entry) return false;
     clockAdvance += 90; entry.release(); return true;
   }
   function networkWait(kind, signal) {
-    const held = kind === 'status' ? holdStatus : holdCommands;
+    const held = kind === 'status' ? holdStatus : kind === 'join' ? holdJoin : kind === 'pad' ? holdPad : holdCommands;
     const delay = kind === 'status' ? options.statusDelay || 0 : options.commandDelay || 2;
     return new Promise((resolve, reject) => {
       let timer;
@@ -235,11 +280,16 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
     });
   }
   function resumeNetwork(kind) {
-    if (kind === 'command') holdCommands = false; else holdStatus = false;
+    if (kind === 'command') holdCommands = false;
+    else if (kind === 'join') holdJoin = false;
+    else if (kind === 'pad') holdPad = false;
+    else holdStatus = false;
     for (const entry of [...pendingNetwork]) if (entry.kind === kind) entry.release();
   }
 
   const statusResult = {app: 'WatchMouse', paired: true, ...inputStatus};
+  const padHub = options.padHub || createPadHub();
+  let lostJoin = options.lostJoin || 0;
   let active = 0, maxActive = 0, failure = null;
   const dragState = {held: false}, commandEffects = [], beacons = [];
   const browserLocation = {href: options.href || 'http://192.168.1.5:53514/?token=testtoken123456789', host: '192.168.1.5:53514'};
@@ -259,7 +309,8 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
     cancelAnimationFrame: id => {clearTimeout(frames.get(id)); frames.delete(id);},
     navigator: {onLine: true, sendBeacon: (url, blob) => {
       beacons.push({url, blob});
-      if (options.simulateDragRace) { dragState.held = false; commandEffects.push('beacon MU'); }
+      if (url.startsWith('/api/pad')) blob.text().then(text => padHub.handle(url, JSON.parse(text)));
+      if (url === '/api/command' && options.simulateDragRace) { dragState.held = false; commandEffects.push('beacon MU'); }
       return true;
     }},
     fetch: async (url, requestOptions) => {
@@ -273,13 +324,21 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
       active++; maxActive = Math.max(maxActive, active);
       const packet = JSON.parse(requestOptions.body);
       records.push(packet);
-      try { await networkWait('command', requestOptions.signal); } finally { active--; }
+      const kind = url === '/api/pad/join' ? 'join' : url === '/api/pad' ? 'pad' : 'command';
+      let padReply;
+      if (url === '/api/pad/join' && (options.earlyJoin || lostJoin)) padReply = padHub.handle(url, packet);
+      const signal = (kind === 'join' && options.ignoreJoinAbort) || (kind === 'pad' && options.ignorePadAbort) ? undefined : requestOptions.signal;
+      try { await networkWait(kind, signal); } finally { active--; }
       if (failure) {
         const {status, error, errorCode} = failure; failure = null;
         return {ok: false, status, json: async () => ({ok: false, error, errorCode})};
       }
       if (options.simulateDragRace && ['MD', 'MU'].includes(packet.command)) {
         dragState.held = packet.command === 'MD'; commandEffects.push(packet.command);
+      }
+      if (url.startsWith('/api/pad')) {
+        if (url === '/api/pad/join' && lostJoin) { lostJoin--; throw new TypeError('join ACK lost'); }
+        return padReply || padHub.handle(url, packet);
       }
       return {ok: true, json: async () => ({ok: true})};
     }
@@ -290,7 +349,7 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
     elements.textInput.setSelectionRange(start, end);
     elements.textInput.emit('input');
   }
-  return {elements, document, window, dragState, commandEffects, beacons, location: browserLocation, historyUpdates, commands, keys, modes, records, stored, draft, statusRequests, timers, frames, runStatusTimer, runMotionTimer, releaseOneCommand, maxStatusActive: () => maxStatusActive, maxActive: () => maxActive, active: () => active, rectReads: () => rectReads, scrollCalls: () => scrollCalls, intervalCalls: () => intervalCalls, holdCommands: () => {holdCommands = true;}, holdStatus: () => {holdStatus = true;}, resumeCommands: () => resumeNetwork('command'), resumeStatus: () => resumeNetwork('status'), failNext: (status, error, errorCode) => {failure = {status, error, errorCode};}, setStatusFailure: fail => {statusFailure = fail;}, setStatus: update => Object.assign(statusResult, update)};
+  return {elements, document, window, padHub, dragState, commandEffects, beacons, location: browserLocation, historyUpdates, commands, keys, modes, records, stored, draft, statusRequests, timers, frames, runStatusTimer, runMotionTimer, runTimer, releaseOneCommand, maxStatusActive: () => maxStatusActive, maxActive: () => maxActive, active: () => active, rectReads: () => rectReads, scrollCalls: () => scrollCalls, intervalCalls: () => intervalCalls, holdCommands: () => {holdCommands = true;}, holdStatus: () => {holdStatus = true;}, holdPad: () => {holdPad = true;}, resumeCommands: () => resumeNetwork('command'), resumeStatus: () => resumeNetwork('status'), resumeJoin: () => resumeNetwork('join'), resumePad: () => resumeNetwork('pad'), failNext: (status, error, errorCode) => {failure = {status, error, errorCode};}, setStatusFailure: fail => {statusFailure = fail;}, setStatus: update => Object.assign(statusResult, update)};
 }
 
 (async () => {
@@ -491,7 +550,7 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
 
 // Native pad mode: a receiver with ViGEmBus reports nativeGamepad, so the
   // gamepad panel posts controller snapshots instead of mapped keystrokes.
-  const settle = () => new Promise(resolve => setTimeout(resolve, 140));
+  const settlePad = () => new Promise(resolve => setTimeout(resolve, 140));
   // Settings diagnostics explain how keys are injected and warn when the
   // receiver cannot reach an elevated game.
   const diag = createApp('gamepad', {keyboardMode: 'scancode', elevated: false});
@@ -514,7 +573,7 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
   assert.equal(native.intervalCalls(), 0, 'native keep-alive uses timeouts, not a permanent interval');
 
   nativeButton('a').emit('pointerdown', {pointerId: 31, button: 0});
-  await settle();
+  await settlePad();
   assert.deepEqual(nativePad().buttons, ['a'], 'native mode posts the pad button id');
   assert.equal(native.records.filter(packet => packet.key).length, 0, 'native mode sends no keyboard commands');
 
@@ -522,19 +581,19 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
   nativeStick.getBoundingClientRect = () => ({left: 0, top: 0, width: 100, height: 100});
   nativeStick.emit('pointerdown', {pointerId: 32, button: 0, clientX: 50, clientY: 50});
   nativeStick.emit('pointermove', {pointerId: 32, clientX: 100, clientY: 50});
-  await settle();
+  await settlePad();
   const axesSent = nativePad();
   assert(axesSent.rx > 0.9 && axesSent.ry === 0, 'the right stick travels as an analog axis');
 
   nativeButton('rt').emit('pointerdown', {pointerId: 33, button: 0});
-  await settle();
+  await settlePad();
   assert.equal(nativePad().rt, 1, 'RT travels as a trigger value');
   assert(!nativePad().buttons.includes('rt'), 'triggers are not duplicated as buttons');
 
   nativeStick.emit('pointerup', {pointerId: 32, clientX: 100, clientY: 50});
   nativeButton('rt').emit('pointerup', {pointerId: 33, button: 0});
   nativeButton('a').emit('pointerup', {pointerId: 31, button: 0});
-  await settle();
+  await settlePad();
   const neutralPad = nativePad();
   assert.deepEqual(neutralPad.buttons, [], 'releasing everything sends a neutral snapshot');
   assert.equal(neutralPad.rt, 0);
@@ -542,11 +601,11 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
 
   // Leaving the panel while holding a native button must release it too.
   nativeButton('x').emit('pointerdown', {pointerId: 34, button: 0});
-  await settle();
+  await settlePad();
   assert.deepEqual(nativePad().buttons, ['x']);
   native.elements.mouseModeButton.click();
-  await settle();
-  assert.deepEqual(nativePad().buttons, [], 'switching mode releases the native pad');
+  await settlePad();
+  assert.deepEqual(native.padHub.outputs.get(1).buttons, [], 'switching mode leaves and releases only its native pad');
 
   const pad = elements.touchpad;
   pad.emit('pointerdown', {pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 100});
@@ -915,5 +974,106 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
   heartbeat.document.hidden = true; heartbeat.document.emit('visibilitychange'); await settle(heartbeat);
   assert.equal(heartbeat.timers.size, 0, 'no heartbeat or polling remains in the background');
 
-  console.log('PASS: integrated minimal UI/silent success, modes/native focus, viewport resize, mouse/drag, independent scroll rail/fractions/cancel/cleanup, draft deletion/backspace, IME/Unicode send, pairing/input readiness, actionable permission errors/failed-send preservation, authenticated serialized requests, saved EN/ZH interface and pairing, interface-only dictation labels, non-overlapping status checks, permission/restart reconnect, hidden-page suspension, stale-input discard, pad trackpad drag/tap/hold-right-click.');
+  const buttonOn = (phone, name) => phone.document.querySelectorAll('#gamepadPanel [data-pad]').find(button => button.dataset.pad === name);
+  const nativeStatus = {nativeGamepad: true, maxGamepads: 4, features: ['gamepad.multiplayer']};
+  const room = createPadHub();
+  const phone1 = createApp('gamepad', nativeStatus, {padHub: room}); await wait(); await wait();
+  const phone2 = createApp('gamepad', nativeStatus, {padHub: room}); await wait(); await wait();
+  assert.equal(phone1.elements.padPlayerBadge.textContent, 'P1');
+  assert.equal(phone2.elements.padPlayerBadge.textContent, 'P2');
+  const p1Join = phone1.records.find(packet => packet.requestId), p2Join = phone2.records.find(packet => packet.requestId);
+  assert.notEqual(p1Join.requestId, p2Join.requestId, 'independent phone pages own independent activation IDs');
+  assert(phone1.runTimer(1000) && phone2.runTimer(1000)); await wait(); await wait();
+  assert(phone1.records.filter(packet => packet.pad).length >= 2 && phone2.records.filter(packet => packet.pad).length >= 2, 'neutral phones renew their leases too');
+  buttonOn(phone1, 'a').emit('pointerdown', {pointerId: 501, button: 0});
+  buttonOn(phone2, 'b').emit('pointerdown', {pointerId: 502, button: 0}); await settlePad();
+  assert.deepEqual(room.outputs.get(1).buttons, ['a']);
+  assert.deepEqual(room.outputs.get(2).buttons, ['b'], 'one phone never overwrites the other controller');
+  const originalSession = room.requests.get(p1Join.requestId);
+  const joinCount = phone1.records.filter(packet => packet.requestId).length;
+  phone1.window.emit('orientationchange'); await settlePad();
+  assert.equal(room.requests.get(p1Join.requestId), originalSession, 'rotation keeps the same controller reservation');
+  assert.equal(phone1.records.filter(packet => packet.requestId).length, joinCount);
+  assert.deepEqual(room.outputs.get(1).buttons, []);
+  assert.deepEqual(room.outputs.get(2).buttons, ['b']);
+  assert(!phone1.records.some(packet => packet.command === 'MU'), 'native cleanup does not send global keyboard/mouse releases');
+
+  const wireRoom = createPadHub();
+  const wire = createApp('gamepad', nativeStatus, {padHub: wireRoom, ignorePadAbort: true}); await wait(); await wait();
+  const wireSession = wire.records.find(packet => packet.session && packet.pad).session;
+  wire.holdPad(); buttonOn(wire, 'a').emit('pointerdown', {pointerId: 510, button: 0}); await wait(); await wait();
+  wire.window.emit('blur'); await wait();
+  assert.deepEqual(wireRoom.outputs.get(1).buttons, [], 'neutral beacon applies before an older blocked held state');
+  wire.resumePad(); await settlePad();
+  assert.deepEqual(wireRoom.outputs.get(1).buttons, [], 'older sequence cannot restore a released button');
+  assert.equal(wireRoom.sessions.get(wireSession).session, wireSession, 'short blur does not leave/rejoin');
+  assert(wireRoom.calls.some(call => call.url === '/api/pad' && call.packet.seq > 1));
+
+  const lateRoom = createPadHub();
+  const lateJoin = createApp('gamepad', nativeStatus, {padHub: lateRoom, holdJoin: true, earlyJoin: true, ignoreJoinAbort: true}); await wait();
+  const cancelledId = lateJoin.records.find(packet => packet.requestId).requestId;
+  buttonOn(lateJoin, 'a').emit('pointerdown', {pointerId: 520, button: 0});
+  assert(!buttonOn(lateJoin, 'a').classList.contains('is-pressed'));
+  assert.equal(lateJoin.records.filter(packet => packet.pad).length, 0, 'not-yet-joined input is not saved for later');
+  lateJoin.elements.mouseModeButton.click(); await wait();
+  assert(!lateRoom.requests.has(cancelledId), 'leave(requestId) cancels an allocation before its join ACK');
+  const replacement = createApp('gamepad', nativeStatus, {padHub: lateRoom}); await wait(); await wait();
+  buttonOn(replacement, 'b').emit('pointerdown', {pointerId: 521, button: 0}); await settlePad();
+  lateJoin.elements.gamepadModeButton.click(); await wait();
+  lateJoin.resumeJoin(); await settlePad();
+  assert.equal(lateJoin.elements.padPlayerBadge.textContent, 'P2', 'old join ACK cannot overwrite a new activation');
+  assert.deepEqual(lateRoom.outputs.get(1).buttons, ['b'], 'late old leave cannot reset the replacement player');
+  assert(lateJoin.records.filter(packet => packet.pad).every(packet => packet.pad.buttons.length === 0), 'pre-join touches are never replayed');
+
+  const staleRoom = createPadHub();
+  const oldPhone = createApp('gamepad', nativeStatus, {padHub: staleRoom, ignorePadAbort: true}); await wait(); await wait();
+  oldPhone.holdPad(); buttonOn(oldPhone, 'x').emit('pointerdown', {pointerId: 530, button: 0}); await wait(); await wait();
+  oldPhone.document.hidden = true; oldPhone.document.emit('visibilitychange'); await wait();
+  const newPhone = createApp('gamepad', nativeStatus, {padHub: staleRoom}); await wait(); await wait();
+  buttonOn(newPhone, 'y').emit('pointerdown', {pointerId: 531, button: 0}); await settlePad();
+  oldPhone.resumePad(); await settlePad();
+  assert.deepEqual(staleRoom.outputs.get(1).buttons, ['y'], 'delayed old-session snapshot cannot affect a newly assigned player');
+  assert.equal(oldPhone.timers.size, 0, 'hidden old activation has no keepalive or join retry');
+  oldPhone.document.hidden = false; oldPhone.document.emit('visibilitychange'); await settlePad();
+  assert.equal(oldPhone.elements.padPlayerBadge.textContent, 'P2');
+  assert.deepEqual(staleRoom.outputs.get(1).buttons, ['y']);
+  assert.deepEqual(staleRoom.outputs.get(2).buttons, [], 'resumed page starts neutral instead of replaying held X');
+
+  const fullRoom = createPadHub();
+  const crowd = Array.from({length: 5}, () => createApp('gamepad', nativeStatus, {padHub: fullRoom}));
+  await settlePad();
+  assert.equal(fullRoom.sessions.size, 4);
+  const waiting = crowd.find(phone => phone.elements.padPlayerBadge.hidden);
+  assert(waiting && waiting.document.querySelector('#gamepadPanel .gamepad-hint').textContent.includes('Four players'));
+  assert.equal(waiting.elements.connectionButton.getAttribute('aria-label'), 'Connected; open connection settings');
+  buttonOn(waiting, 'a').emit('pointerdown', {pointerId: 540, button: 0}); await wait();
+  assert(!waiting.records.some(packet => packet.pad || packet.key), 'fifth player never falls back to shared keyboard');
+  const waitingId = waiting.records.find(packet => packet.requestId).requestId;
+  crowd.find(phone => !phone.elements.padPlayerBadge.hidden).elements.mouseModeButton.click(); await wait();
+  assert(waiting.runTimer(5000, true)); await settlePad();
+  assert(!waiting.elements.padPlayerBadge.hidden);
+  assert(waiting.records.filter(packet => packet.requestId).every(packet => packet.requestId === waitingId), 'full-room retry keeps the same activation ID');
+
+  const retryRoom = createPadHub();
+  const lostJoin = createApp('gamepad', nativeStatus, {padHub: retryRoom, lostJoin: 1}); await wait(); await wait();
+  const firstRetryId = lostJoin.records.find(packet => packet.requestId).requestId;
+  assert.equal(retryRoom.sessions.size, 1);
+  assert(lostJoin.runTimer(5000, true)); await settlePad();
+  assert.equal(retryRoom.sessions.size, 1, 'lost join ACK retry allocates no additional controller');
+  assert(lostJoin.records.filter(packet => packet.requestId).every(packet => packet.requestId === firstRetryId));
+  const expiredRoom = createPadHub();
+  const expiredJoin = createApp('gamepad', nativeStatus, {padHub: expiredRoom, lostJoin: 1}); await wait(); await wait();
+  const expiredId = expiredJoin.records.find(packet => packet.requestId).requestId;
+  expiredRoom.expire(expiredRoom.requests.get(expiredId));
+  assert(expiredJoin.runTimer(5000, true)); await settlePad();
+  assert(expiredJoin.records.filter(packet => packet.requestId).some(packet => packet.requestId !== expiredId), 'expired join identity starts a fresh generation');
+  assert.equal(expiredRoom.sessions.size, 1);
+  const stateSession = [...expiredRoom.sessions.keys()][0];
+  buttonOn(expiredJoin, 'a').emit('pointerdown', {pointerId: 550, button: 0}); await settlePad();
+  expiredRoom.expire(stateSession);
+  assert(expiredJoin.runTimer(1000)); await settlePad();
+  assert(!buttonOn(expiredJoin, 'a').classList.contains('is-pressed'));
+  assert.deepEqual(expiredRoom.outputs.get(1).buttons, [], 'expired state session rejoins with empty input');
+
+  console.log('PASS: mouse/keyboard/performance regressions, single-player keyboard fallback, independent P1/P2 native sessions, neutral heartbeat, sequence-fenced rotation/blur, pending-join cancellation, stale session snapshots, fifth-player full/retry, idempotent lost-ACK join and expired-generation recovery.');
 })().catch(error => {console.error(error); process.exitCode = 1;});

@@ -9,3 +9,5 @@ These PNGs are captures of the real WatchMouse 2.4 interface. They use a recordi
 Demo desktop modes do not load/write the user's settings, listen for phone connections, inject input, or change firewall/permission settings.
 
 The `phone-*-v26.jpg` images show the red/black 2.6 UI served only on loopback by `tests/ui_server.py`; the controller mocks all desktop input. The visible test pairing data does not grant access to a real receiver.
+
+`phone-gamepad-v28.jpg` shows seat P2 assigned to a browser page by the recording-only multi-gamepad test server. All keyboard, mouse and controller output was mocked.

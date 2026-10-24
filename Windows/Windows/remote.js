@@ -10,8 +10,10 @@
       watch: 'Watch ↗', left: 'Left', drag: 'Drag', right: 'Right', connect: 'Connect', speed: 'Speed',
       video: 'Video', mouse: 'Mouse', gamepad: 'Pad', keyboard: 'Keyboard', language: 'Language', interfaceLanguage: 'Interface language',
       videoControls: 'Video controls', previousVideo: 'Previous video', playPause: 'Play or pause', nextVideo: 'Next video',
-      gamepadControls: 'Gamepad controls', gamepadLayout: 'Gamepad layout', gamepadHint: 'Buttons map to keyboard keys for games that support them',
+      gamepadControls: 'Gamepad controls', gamepadLayout: 'Gamepad layout', gamepadHint: 'Keyboard mapping · single player only',
       gamepadHintNative: 'Native mode: the computer sees an Xbox controller',
+      gamepadJoining: 'Connecting controller…', gamepad_full: 'Four players are connected.', gamepad_unavailable: 'Native controller unavailable.',
+      gamepad_session_expired: 'Reconnecting controller…', gamepad_session_required: 'Update the computer receiver.', player: 'Player',
       padFullscreen: 'Fullscreen landscape', padRotateHint: 'Turn the phone sideways for a better grip',
       inputModeScancode: 'Keys are injected as hardware scancodes, so games that read raw input still see them',
       inputModeElevated: 'Receiver is not elevated: a game launched as administrator will ignore input',
@@ -44,8 +46,10 @@
       watch: '手表 ↗', left: '左键', drag: '拖动', right: '右键', connect: '连接', speed: '速度',
       video: '抖音', mouse: '鼠标', gamepad: '手柄', keyboard: '键鼠', language: '语言', interfaceLanguage: '界面语言',
       videoControls: '视频遥控', previousVideo: '上一个视频', playPause: '播放或暂停', nextVideo: '下一个视频',
-      gamepadControls: '手柄控制', gamepadLayout: '手柄布局', gamepadHint: '按键映射为键盘，适合支持键鼠的游戏',
+      gamepadControls: '手柄控制', gamepadLayout: '手柄布局', gamepadHint: '键盘映射 · 仅单人',
       gamepadHintNative: '原生模式：电脑已识别为 Xbox 手柄',
+      gamepadJoining: '正在连接手柄…', gamepad_full: '已有四位玩家', gamepad_unavailable: '原生手柄不可用',
+      gamepad_session_expired: '正在重连手柄…', gamepad_session_required: '请更新电脑接收器', player: '玩家',
       padFullscreen: '全屏横屏游玩', padRotateHint: '横屏握持更顺手',
       inputModeScancode: '按键以硬件扫描码注入，读原始输入的游戏也能收到',
       inputModeElevated: '接收器未以管理员运行：游戏若以管理员启动会收不到按键',
@@ -190,9 +194,10 @@
     connectionMessageKey = ok ? '' : messageKey;
     renderConnection();
     if (!ok) {
+      leavePadActivation();
       if (dragMayBeHeld) { releaseBeacon(); enqueueRelease(); }
       discardInput(messageKey); setConnectionPanel(true);
-    }
+    } else ensurePadActivation();
   }
   function setConnectionPanel(open) {
     $('connectionPanel').hidden = !open;
@@ -285,7 +290,12 @@
       // A receiver that reports a native pad backend switches the gamepad
       // panel from keyboard mapping to real controller input.
       const nativePad = result.nativeGamepad === true;
-      if (nativePad !== padNative) { padNative = nativePad; updatePadHint(); }
+      if (nativePad !== padNative) {
+        releaseDragOnLeave();
+        leavePadActivation();
+        padNative = nativePad;
+        updatePadHint();
+      }
       updateInputModeNote(result);
       // A manually corrected key must also replace an old QR key in the URL;
       // otherwise reloading or bookmarking the page restores the stale key.
@@ -632,7 +642,7 @@
   let gamepadLayout = storage.get('watchmouse_pad_layout') === 'ps' ? 'ps' : 'xbox';
   // Declared with var so the early language pass can read it safely.
   var padNative = false;
-  let padInFlight = false, padDirty = false, padSendTimer = null, padKeepTimer = null;
+  let padActivation = null;
 
   function wantedPadKeys() {
     const wanted = new Set();
@@ -678,6 +688,7 @@
     refreshStickKeys();
   }
   function setStickInput(side, nx, ny) {
+    if (stickAxes[side].x === nx && stickAxes[side].y === ny) return;
     stickAxes[side] = {x: nx, y: ny};
     if (padNative) { schedulePadSend(); return; }
     syncStickKeys(side, keysFromStick(side, nx, ny));
@@ -702,50 +713,143 @@
     const l = stickAxes.left, r = stickAxes.right;
     return heldPadKeys.size > 0 || l.x !== 0 || l.y !== 0 || r.x !== 0 || r.y !== 0;
   }
+  function canUseGamepad() {
+    return connected && !document.hidden && mode === 'gamepad' && (!padNative || Boolean(padActivation && padActivation.session && !padActivation.closed));
+  }
+  function currentPadActivation(activation) {
+    return activation === padActivation && !activation.closed && padNative && connected && mode === 'gamepad' && !document.hidden && activation.token === token;
+  }
+  function newPadRequestId() {
+    const values = new Uint32Array(4);
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') crypto.getRandomValues(values);
+    else for (let index = 0; index < values.length; index++) values[index] = Math.floor(Math.random() * 0x100000000);
+    return Array.from(values, value => value.toString(16).padStart(8, '0')).join('');
+  }
+  function ensurePadActivation() {
+    if (!padNative || !connected || mode !== 'gamepad' || document.hidden || navigator.onLine === false) return;
+    if (padActivation && !padActivation.closed) return;
+    clearPadState(); clearGamepadUi();
+    const activation = {requestId: newPadRequestId(), token, session: '', player: 0, seq: 0, closed: false,
+      joining: false, inFlight: false, dirty: false, mayHold: false, sendTimer: null, keepTimer: null, retryTimer: null,
+      joinController: null, sendController: null, issue: '', leaveKeys: new Set()};
+    padActivation = activation;
+    updatePadHint();
+    joinPadActivation(activation);
+  }
+  async function joinPadActivation(activation) {
+    if (!currentPadActivation(activation) || activation.joining || activation.session) return;
+    activation.joining = true;
+    activation.issue = '';
+    const controller = new AbortController(); activation.joinController = controller;
+    try {
+      const result = await request('/api/pad/join', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-WatchMouse-Token': activation.token},
+        body: JSON.stringify({token: activation.token, requestId: activation.requestId})}, controller, 4000);
+      if (typeof result.session !== 'string' || !result.session || !Number.isInteger(result.player) || result.player < 1 || result.player > 4) throw localError('invalidResponse');
+      activation.session = result.session; activation.player = result.player;
+      if (!currentPadActivation(activation)) { sendPadLeave(activation); return; }
+      clearPadState(); clearGamepadUi();
+      updatePadHint();
+      schedulePadSend(true);
+    } catch (error) {
+      if (!currentPadActivation(activation)) return;
+      const key = errorMessage(error);
+      if (key === 'invalid_token') { retryBlocked = true; setConnection(false, key); return; }
+      if (error.errorCode === 'gamepad_session_expired') { leavePadActivation(); ensurePadActivation(); return; }
+      activation.issue = ['gamepad_full', 'gamepad_unavailable', 'gamepad_session_required'].includes(error.errorCode) ? error.errorCode : 'gamepad_unavailable';
+      updatePadHint();
+      // Join is idempotent. Retry the same request ID so a lost response never
+      // allocates a second controller to one page.
+      activation.retryTimer = setTimeout(() => {
+        activation.retryTimer = null;
+        if (currentPadActivation(activation)) joinPadActivation(activation);
+      }, 5000);
+    } finally { activation.joining = false; activation.joinController = null; }
+  }
+  function sendPadLeave(activation) {
+    const key = activation.session || 'pending';
+    if (activation.leaveKeys.has(key)) return;
+    activation.leaveKeys.add(key);
+    const payload = {token: activation.token, requestId: activation.requestId};
+    if (activation.session) payload.session = activation.session;
+    const body = JSON.stringify(payload);
+    try { if (navigator.sendBeacon('/api/pad/leave', new Blob([body], {type: 'application/json'}))) return; } catch (_) {}
+    try { fetch('/api/pad/leave', {method: 'POST', keepalive: true, headers: {'Content-Type': 'application/json', 'X-WatchMouse-Token': activation.token}, body}).catch(() => {}); } catch (_) {}
+  }
+  function leavePadActivation() {
+    const activation = padActivation;
+    if (!activation) return;
+    padActivation = null; activation.closed = true;
+    for (const timer of ['sendTimer', 'keepTimer', 'retryTimer']) { if (activation[timer]) clearTimeout(activation[timer]); activation[timer] = null; }
+    if (activation.joinController) activation.joinController.abort();
+    if (activation.sendController) activation.sendController.abort();
+    clearPadState(); clearGamepadUi();
+    sendPadLeave(activation);
+    updatePadHint();
+  }
   function schedulePadSend(immediate = false) {
-    if (!padNative) return;
-    padDirty = true;
-    if (padInFlight) return;
+    const activation = padActivation;
+    if (!activation || !activation.session || !currentPadActivation(activation)) return;
+    activation.dirty = true;
+    if (activation.inFlight) return;
     if (immediate) {
-      if (padSendTimer) { clearTimeout(padSendTimer); padSendTimer = null; }
-      sendPadState();
+      if (activation.sendTimer) { clearTimeout(activation.sendTimer); activation.sendTimer = null; }
+      sendPadState(activation);
       return;
     }
-    if (!padSendTimer) padSendTimer = setTimeout(() => { padSendTimer = null; sendPadState(); }, 33);
+    if (!activation.sendTimer) activation.sendTimer = setTimeout(() => { activation.sendTimer = null; sendPadState(activation); }, 33);
   }
-  async function sendPadState() {
-    if (!padNative || padInFlight || !connected || padSendTimer) return;
-    const body = JSON.stringify({token, pad: padSnapshot()});
-    padDirty = false;
-    padInFlight = true;
+  async function sendPadState(activation) {
+    if (!activation || !activation.session || !currentPadActivation(activation) || activation.inFlight || activation.sendTimer) return;
+    const snapshot = padSnapshot();
+    const body = JSON.stringify({token: activation.token, session: activation.session, seq: ++activation.seq, pad: snapshot});
+    activation.dirty = false; activation.inFlight = true;
+    activation.mayHold = activation.mayHold || activePadInput();
+    const controller = new AbortController(); activation.sendController = controller;
     try {
-      await request('/api/pad', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-WatchMouse-Token': token}, body}, new AbortController(), 4000);
+      await request('/api/pad', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-WatchMouse-Token': activation.token}, body}, controller, 4000);
+      if (!currentPadActivation(activation)) return;
+      if (!snapshot.buttons.length && !snapshot.lx && !snapshot.ly && !snapshot.rx && !snapshot.ry && !snapshot.lt && !snapshot.rt) activation.mayHold = false;
       lastInputAck = performance.now();
       feedback();
     } catch (error) {
+      if (!currentPadActivation(activation)) return;
       const message = errorMessage(error);
       if (message === 'invalid_token') { retryBlocked = true; setConnection(false, message); }
+      else {
+        leavePadActivation();
+        if (error.errorCode === 'gamepad_session_expired') ensurePadActivation();
+        else checkConnection();
+      }
     } finally {
-      padInFlight = false;
-      if (!padNative || !connected) { stopPadKeepAlive(); return; }
+      activation.inFlight = false; activation.sendController = null;
+      if (!currentPadActivation(activation)) return;
       // Coalesce whatever arrived while the previous snapshot was in flight.
-      if (padDirty) {
-        if (padSendTimer) { clearTimeout(padSendTimer); padSendTimer = null; }
-        padSendTimer = setTimeout(() => { padSendTimer = null; sendPadState(); }, 16);
+      if (activation.dirty) {
+        if (activation.sendTimer) clearTimeout(activation.sendTimer);
+        activation.sendTimer = setTimeout(() => { activation.sendTimer = null; sendPadState(activation); }, 16);
         return;
       }
       // A virtual pad holds its last state, so refresh a held input once a
       // second; the receiver drops a silent pad after five seconds.
-      if (activePadInput()) startPadKeepAlive();
-      else stopPadKeepAlive();
+      startPadKeepAlive(activation);
     }
   }
-  function startPadKeepAlive() {
-    if (padKeepTimer) return;
-    padKeepTimer = setTimeout(() => { padKeepTimer = null; sendPadState(); }, 1000);
+  function startPadKeepAlive(activation = padActivation) {
+    if (!activation || !activation.session || !currentPadActivation(activation) || activation.keepTimer) return;
+    activation.keepTimer = setTimeout(() => { activation.keepTimer = null; sendPadState(activation); }, 1000);
   }
   function stopPadKeepAlive() {
-    if (padKeepTimer) { clearTimeout(padKeepTimer); padKeepTimer = null; }
+    if (padActivation && padActivation.keepTimer) { clearTimeout(padActivation.keepTimer); padActivation.keepTimer = null; }
+  }
+  function neutralPadActivation() {
+    const activation = padActivation;
+    if (!activation || !activation.session || !currentPadActivation(activation)) return;
+    // A higher sequence fences an older held snapshot which might arrive
+    // after this neutral beacon. The ordered sender follows with neutral too.
+    const body = JSON.stringify({token: activation.token, session: activation.session, seq: ++activation.seq,
+      pad: {lx: 0, ly: 0, rx: 0, ry: 0, lt: 0, rt: 0, buttons: []}});
+    try { navigator.sendBeacon('/api/pad', new Blob([body], {type: 'application/json'})); } catch (_) {}
+    schedulePadSend(true);
   }
   // Trackpad in the middle of the pad: drag moves the cursor, a short tap is a
   // left click, holding still is a right click. Same queue as the mouse panel,
@@ -824,7 +928,19 @@
   }
   function updatePadHint() {
     const hint = document.querySelector('#gamepadPanel .gamepad-hint');
-    if (hint) hint.textContent = t(padNative ? 'gamepadHintNative' : 'gamepadHint');
+    const activation = padActivation;
+    const issue = padNative && activation && activation.issue;
+    if (hint) {
+      hint.textContent = t(!padNative ? 'gamepadHint' : issue || (activation && activation.session ? 'gamepadHintNative' : 'gamepadJoining'));
+      hint.classList.toggle('has-error', Boolean(issue));
+    }
+    const badge = $('padPlayerBadge');
+    if (badge) {
+      const player = padNative && activation && activation.session && !activation.closed ? activation.player : 0;
+      badge.hidden = !player;
+      badge.textContent = player ? 'P' + player : '';
+      badge.setAttribute('aria-label', player ? t('player') + ' ' + player : '');
+    }
   }
   function keysFromStick(side, nx, ny) {
     const map = STICK_KEYS[side];
@@ -851,7 +967,8 @@
   }
   function releaseGamepadControls(sendServer = true) {
     const hadKeys = heldPadKeys.size > 0 || heldStickKeys.size > 0;
-    const wasNative = padNative && activePadInput();
+    const activation = padActivation;
+    const wasNative = padNative && activation && activation.session && (activePadInput() || activation.mayHold || activation.inFlight);
     clearPadState();
     for (const [pointerId, state] of stickPointers) {
       if (state.stick.hasPointerCapture(pointerId)) state.stick.releasePointerCapture(pointerId);
@@ -860,7 +977,11 @@
     clearGamepadUi();
     // A virtual pad keeps its last state, so queue a neutral snapshot even when
     // the page is going away; the beacon below is the best-effort backstop.
-    if (wasNative) { schedulePadSend(true); return; }
+    if (padNative) {
+      if (wasNative) neutralPadActivation();
+      else startPadKeepAlive();
+      return;
+    }
     if (hadKeys && sendServer) { syncPadKeys(); enqueueRelease(); }
   }
   function setGamepadLayout(layout) {
@@ -879,6 +1000,7 @@
     const bind = event => {
       if (event.button !== undefined && event.button !== 0) return;
       event.preventDefault();
+      if (!canUseGamepad()) return;
       const id = button.dataset.pad;
       if (!id) return;
       // 记下是哪个指针按着这个键：同一根手指重复按下说明上次的抬手丢了，
@@ -910,6 +1032,7 @@
     stick.addEventListener('pointerdown', event => {
       if (event.button !== undefined && event.button !== 0) return;
       event.preventDefault();
+      if (!canUseGamepad()) return;
       // 一根摇杆只跟一根手指。残留的旧指针说明上一次抬手事件丢了，
       // 直接作废，否则摇杆会停在“手指还按着”的那一档。
       for (const [id, point] of [...stickPointers]) if (point.stick === stick && id !== event.pointerId) stickPointers.delete(id);
@@ -1020,6 +1143,7 @@
 
   function setMode(nextMode, focusInput = false) {
     if (!['douyin', 'mouse', 'keyboard', 'gamepad'].includes(nextMode)) nextMode = 'mouse';
+    if (mode === 'gamepad' && nextMode !== 'gamepad') leavePadActivation();
     if (mode === 'gamepad' && nextMode !== 'gamepad' && immersiveActive()) setPadImmersive(false);
     if (mode && mode !== nextMode) { releaseDragOnLeave(); cancelAllGestures(); }
     mode = nextMode;
@@ -1032,6 +1156,7 @@
     document.body.classList.toggle('mode-douyin', mode === 'douyin');
     document.body.classList.toggle('mode-gamepad', mode === 'gamepad');
     document.querySelectorAll('[data-mode]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.mode === mode)));
+    ensurePadActivation();
     if (connected) feedback();
     if (mode !== 'keyboard') { $('textInput').blur(); if (speechListening && speech) speech.stop(); }
     else if (focusInput) {
@@ -1133,7 +1258,7 @@
   function releaseDragOnLeave() {
     // Best-effort release before the browser suspends the page. The receiver
     // also releases a held button when its session times out.
-    const hadPadKeys = heldPadKeys.size > 0 || activePadInput();
+    const hadPadKeys = !padNative && (heldPadKeys.size > 0 || activePadInput());
     if (dragActive || dragMayBeHeld || hadPadKeys) {
       flushMotion();
       // Keep an ordered release in the queue as well, so an in-flight MD
@@ -1161,14 +1286,11 @@
   function releaseBeacon() {
     if (releaseBeaconSent) return;
     try { releaseBeaconSent = navigator.sendBeacon('/api/command', new Blob([JSON.stringify({token: dragToken || token, command: 'MU'})], {type: 'application/json'})); } catch (_) {}
-    if (!padNative) return;
-    try {
-      navigator.sendBeacon('/api/pad', new Blob([JSON.stringify({token, pad: {lx: 0, ly: 0, rx: 0, ry: 0, lt: 0, rt: 0, buttons: []}})], {type: 'application/json'}));
-    } catch (_) {}
   }
   function suspendPage() {
     cancelStatusTimer(); statusVersion++; statusCheckQueued = false;
     if (statusController) statusController.abort();
+    leavePadActivation();
     releaseDragOnLeave(); discardInput('notConnected', true);
     cancelAllGestures();
     if (speechListening && speech) speech.stop();

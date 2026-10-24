@@ -269,7 +269,8 @@ class ReceiverProtocolTests(unittest.TestCase):
     def setUp(self):
         self.calls = []
         self.controller = input_control.InputController(sender=lambda items: self.calls.append(snapshot(items)))
-        self.server = receiver.create_server(host="127.0.0.1", port=0, token="test-token", controller=self.controller)
+        self.server = receiver.create_server(host="127.0.0.1", port=0, token="test-token", controller=self.controller,
+                                             pad=Mock(available=False, error="Native pad disabled in protocol tests"))
         self.worker = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
         self.worker.start()
         self.port = self.server.server_port

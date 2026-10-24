@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 2.8 — 2026-10-25
+
+- Independent native Xbox 360 controllers for up to four active phone browsers on Windows, with automatic WatchMouse P1–P4 seats, session-specific state and ordered snapshots.
+- Visible gamepad pages retain their seats with neutral heartbeats; mode exit, backgrounding and expired sessions release controls. No input is held merely to keep a player connected.
+- WatchMouse seat numbers are separate from game player numbers. Physical and other virtual Xbox controllers share the four XInput slots; the game must support local multiplayer and its requested player count. Keyboard fallback and the Mac receiver do not add native multiplayer controllers.
+- Windows builds verify `pad_control` as the fourth application module while preserving asset and license checks. Native bindings continue to use an existing matching user-site vgamepad installation; builds do not install drivers.
 
 - Rotation no longer leaves the phone controls stuck. Every pointer gesture (mouse touchpad, gamepad trackpad, sticks, scroll rail, held buttons) resets on `orientationchange`, width changes, fullscreen changes, mode switches, tab hiding, and when the last finger lifts — so a lost `pointerup`/`pointercancel` (common on iOS in landscape) can no longer leave a control thinking a finger is still down.
 - Each gesture also self-heals: touching a stuck control again clears the stale pointer first, and stale pointers on the mouse touchpad are pruned so one ghost finger no longer turns every later drag into a two-finger scroll.

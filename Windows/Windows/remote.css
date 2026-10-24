@@ -96,6 +96,9 @@ textarea:focus { outline: none; }
 .layout-switcher button { min-height: 34px; padding: 0 clamp(8px, 2vmin, 14px); border-radius: 11px; font-size: 12px; color: #9399ad; white-space: nowrap; }
 .layout-switcher button[aria-pressed=true] { background: #2a2e3a; color: #fff; font-weight: 600; }
 .gamepad-hint { flex: 1; min-width: 0; margin: 0; font-size: 11px; line-height: 1.3; color: #7f8598; text-align: center; }
+.pad-player { flex: none; padding: 5px 8px; border: 1px solid #733343; border-radius: 9px; color: #ffc2cc; background: #321e27; font-size: 12px; font-weight: 700; }
+.pad-hud { flex-wrap: wrap; }
+.pad-hud .gamepad-hint.has-error { display: block; order: 5; flex: 0 0 100%; color: var(--danger); }
 .pad-fullscreen { display: grid; place-items: center; width: 40px; height: 40px; min-width: 40px; border: 1px solid #2d303a; border-radius: 13px; background: #191c24; color: #aab0c4; flex: none; }
 .pad-fullscreen .icon { width: 20px; height: 20px; }
 .pad-fullscreen .compress-icon { display: none; }

@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from input_control import InputController, elevated
 import pad_control
 
-PORT, VERSION = 53514, "2.7"
+PORT, VERSION = 53514, "2.8"
 ASSETS = {"/": ("remote.html", "text/html"), "/remote.html": ("remote.html", "text/html"),
           "/remote.js": ("remote.js", "text/javascript"), "/remote.css": ("remote.css", "text/css"),
           "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
@@ -107,6 +107,8 @@ def local_ip():
 
 def error_code(error):
     """Stable API codes let either client language describe native failures."""
+    if getattr(error, "code", None):
+        return error.code
     if isinstance(error, OSError):
         if "辅助功能" in str(error):
             return "accessibility_permission"
@@ -121,18 +123,24 @@ class ReceiverServer(ThreadingHTTPServer):
     max_connections = 64
     connection_timeout = 5
 
-    def __init__(self, address, token, controller, pad=None):
+    def __init__(self, address, token, controller, pad=None, pad_factory=None):
         self.token, self.controller = token, controller
-        self.pad = pad if pad is not None else pad_control.VirtualPad()
         self.started_at, self.last_command_at = time.time(), 0.0
         self.command_count, self.last_client = 0, ""
-        self.command_lock = threading.Lock()
+        self.command_lock = threading.RLock()
+        self.pad_pool = pad_control.PadPool(seed=pad, factory=pad_factory, lock=self.command_lock)
         self.watch_actions = {}
         self.watch_lock = threading.Lock()
         self._connections = set()
         self._connection_lock = threading.Lock()
         self._closing = threading.Event()
-        super().__init__(address, Handler)
+        try:
+            super().__init__(address, Handler)
+        except BaseException:
+            # TCPServer normally calls server_close() on bind failure, but
+            # socket construction itself can fail before its cleanup handler.
+            self.pad_pool.close()
+            raise
 
     def process_request(self, request, client_address):
         # An idle keep-alive connection owns one handler thread. Bound their
@@ -203,18 +211,28 @@ class ReceiverServer(ThreadingHTTPServer):
             self.command_count += 1
             return result
 
-    def apply_pad(self, state, client):
-        # Order with keyboard input and shutdown so a pad snapshot can never
-        # arrive after release_all() cleared the controller.
-        snapshot = pad_control.normalize(state)
+    def join_pad(self, request_id):
         with self.command_lock:
             if self._closing.is_set():
                 raise OSError("服务正在停止")
-            if not self.pad.available:
-                raise OSError("原生手柄不可用：" + (self.pad.error or "未安装驱动"))
-            result = self.pad.apply(snapshot)
-            self.last_command_at, self.last_client = time.time(), client
-            self.command_count += 1
+            return self.pad_pool.join(request_id)
+
+    def leave_pad(self, session=None, request_id=None):
+        with self.command_lock:
+            if self._closing.is_set():
+                raise OSError("服务正在停止")
+            return self.pad_pool.leave(session, request_id)
+
+    def apply_pad(self, state, client, session=None, seq=None):
+        # Order with keyboard input and shutdown so a pad snapshot can never
+        # arrive after release_all() cleared the controller.
+        with self.command_lock:
+            if self._closing.is_set():
+                raise OSError("服务正在停止")
+            result = self.pad_pool.apply(session, seq, state)
+            if not result.get("ignored"):
+                self.last_command_at, self.last_client = time.time(), client
+                self.command_count += 1
             return result
 
     def server_close(self):
@@ -223,8 +241,10 @@ class ReceiverServer(ThreadingHTTPServer):
             # Finish any input already underway before releasing held buttons;
             # commands waiting for this lock see _closing and cannot run later.
             with self.command_lock:
-                self.controller.release_all()
-                self.pad.close()
+                try:
+                    self.controller.release_all()
+                finally:
+                    self.pad_pool.close()
         finally:
             super().server_close()
 
@@ -306,7 +326,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_expect_100(self):
         try:
-            if self.command != "POST" or urlparse(self.path).path not in ("/api/command", "/api/pad", "/watch"):
+            if self.command != "POST" or urlparse(self.path).path not in ("/api/command", "/api/pad", "/api/pad/join", "/api/pad/leave", "/watch"):
                 self.close_connection = True
                 self.reply(404, {"ok": False, "error": "接口不存在"})
                 return False
@@ -342,18 +362,17 @@ class Handler(BaseHTTPRequestHandler):
             paired = self.authorized(token)
             permission = getattr(self.server.controller, "input_error", None)
             input_error = permission() if callable(permission) else ""
+            pad_info = self.server.pad_pool.info()
             self.reply(200, {"app": "WatchMouse", "version": VERSION, "paired": paired,
                              "inputReady": not bool(input_error), "inputError": input_error if paired else "",
                              "inputErrorCode": ("accessibility_permission" if sys.platform == "darwin" else "input_unavailable") if input_error and paired else "",
                              "port": self.server.server_port, "commandCount": self.server.command_count,
                              "lastClient": self.server.last_client if paired else "",
                              "lastCommandAt": self.server.last_command_at if paired else 0,
-                             "nativeGamepad": bool(getattr(self.server.pad, "available", False)),
-                             "padBackend": "vigem" if getattr(self.server.pad, "available", False) else "keyboard",
-                             "padError": (getattr(self.server.pad, "error", "") if paired else ""),
+                             **pad_info, "padError": pad_info["padError"] if paired else "",
                              "elevated": elevated() if sys.platform == "win32" else None,
                              "keyboardMode": getattr(self.server.controller, "KEYBOARD_MODE", "virtual-key"),
-                             "features": ["mouse", "keyboard", "unicode", "watch", "gamepad", "gamepad.native"]})
+                             "features": ["mouse", "keyboard", "unicode", "watch", "gamepad", "gamepad.native", "gamepad.multiplayer"]})
         elif url.path == "/c":
             command = query.get("q", [""])[0]
             if command == "PING":
@@ -396,10 +415,15 @@ class Handler(BaseHTTPRequestHandler):
         except OSError as error:
             self.reply(409, str(error) if plain else {"ok": False, "error": str(error), "errorCode": error_code(error)}, "text/plain" if plain else "application/json")
 
-    def perform_pad(self, payload):
+    def perform_pad(self, payload, path="/api/pad"):
         try:
-            result = self.server.apply_pad(payload.get("pad"), self.client_address[0])
-            self.reply(200, {"ok": True, "result": result})
+            if path == "/api/pad/join":
+                result = self.server.join_pad(payload.get("requestId"))
+            elif path == "/api/pad/leave":
+                result = self.server.leave_pad(payload.get("session"), payload.get("requestId"))
+            else:
+                result = self.server.apply_pad(payload.get("pad"), self.client_address[0], payload.get("session"), payload.get("seq"))
+            self.reply(200, {"ok": True, **result})
         except (ValueError, TypeError, OverflowError) as error:
             self.reply(400, {"ok": False, "error": str(error), "errorCode": error_code(error)})
         except OSError as error:
@@ -407,7 +431,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/api/command", "/api/pad", "/watch"):
+        if path not in ("/api/command", "/api/pad", "/api/pad/join", "/api/pad/leave", "/watch"):
             self.close_connection = True
             return self.reply(404, {"ok": False, "error": "接口不存在"})
         if not self.same_origin():
@@ -437,8 +461,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("请求必须是 JSON 对象")
             if not self.authorized(payload.get("token", "")):
                 return self.reply(401, {"ok": False, "error": "配对码无效，请扫描电脑上的二维码", "errorCode": "invalid_token"})
-            if path == "/api/pad":
-                self.perform_pad(payload)
+            if path in ("/api/pad", "/api/pad/join", "/api/pad/leave"):
+                self.perform_pad(payload, path)
             else:
                 self.perform(payload)
         except (ValueError, UnicodeError) as error:
@@ -495,8 +519,8 @@ class Handler(BaseHTTPRequestHandler):
         controls += "<p>" + t("每点一次执行一次。请先在电脑选中输入框。") + "</p><p><a href='/?" + escape(urlencode({"token": token}), quote=True) + "'>" + t("手机触控板版") + "</a></p></body></html>"
         return head + controls
 
-def create_server(host="0.0.0.0", port=PORT, token=None, controller=None, pad=None):
-    return ReceiverServer((host, port), token or load_settings()["token"], controller or InputController(), pad)
+def create_server(host="0.0.0.0", port=PORT, token=None, controller=None, pad=None, pad_factory=None):
+    return ReceiverServer((host, port), token or load_settings()["token"], controller or InputController(), pad, pad_factory)
 
 def main():
     parser = argparse.ArgumentParser(description="WatchMouse 接收器（桌面 App 请运行 app.py）")

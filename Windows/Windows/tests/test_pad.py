@@ -28,6 +28,7 @@ class FakePad:
 
     def close(self):
         self.closed = True
+        self.available = False
 
 
 class FakeController:
@@ -61,7 +62,9 @@ class NormalizeTests(unittest.TestCase):
 
     def test_malformed_states_are_rejected(self):
         for bad in (None, [], {"lx": "1"}, {"lx": True}, {"buttons": "a"},
-                    {"buttons": ["a", "nope"]}, {"buttons": [1]}):
+                    {"buttons": ["a", "nope"]}, {"buttons": [1]},
+                    {"lx": float("nan")}, {"ry": float("inf")},
+                    {"lt": float("-inf")}, {"rt": 10 ** 500}):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 pad_control.normalize(bad)
 
@@ -71,10 +74,15 @@ class PadEndpointTests(unittest.TestCase):
         self.pad = FakePad()
         self.controller = FakeController()
         self.server = receiver.create_server(host="127.0.0.1", port=0, token="test-token",
-                                            controller=self.controller, pad=self.pad)
+                                            controller=self.controller, pad=self.pad, pad_factory=FakePad)
         self.worker = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
         self.worker.start()
         self.port = self.server.server_port
+        status, _, body = self.request("POST", "/api/pad/join", '{"requestId":"test-activation"}',
+                                       {"Content-Type": "application/json", "X-WatchMouse-Token": "test-token"})
+        self.assertEqual(200, status, body)
+        self.session = json.loads(body)["session"]
+        self.seq = 0
 
     def tearDown(self):
         self.server.shutdown()
@@ -91,6 +99,8 @@ class PadEndpointTests(unittest.TestCase):
             connection.close()
 
     def post_pad(self, payload, headers=None, token_header="test-token"):
+        self.seq += 1
+        payload = {"session": self.session, "seq": self.seq, **payload}
         merged = {"Content-Type": "application/json"}
         if token_header:
             merged["X-WatchMouse-Token"] = token_header
@@ -104,9 +114,14 @@ class PadEndpointTests(unittest.TestCase):
         self.assertTrue(payload["nativeGamepad"])
         self.assertEqual(payload["padBackend"], "vigem")
         self.assertIn("gamepad.native", payload["features"])
+        self.assertIn("gamepad.multiplayer", payload["features"])
+        self.assertEqual(4, payload["maxGamepads"])
+        self.assertEqual(1, payload["activeGamepads"])
 
     def test_status_falls_back_to_keyboard_mapping(self):
-        self.server.pad = FakePad(available=False, error="需要先安装 ViGEmBus 驱动")
+        self.server.pad_pool.close()
+        self.server.pad_pool = pad_control.PadPool(seed=FakePad(available=False, error="需要先安装 ViGEmBus 驱动"),
+                                                   lock=self.server.command_lock)
         _, _, body = self.request(path="/api/status?token=test-token")
         payload = json.loads(body)
         self.assertFalse(payload["nativeGamepad"])
@@ -146,10 +161,18 @@ class PadEndpointTests(unittest.TestCase):
         self.assertEqual(self.pad.applied, [])
 
     def test_unavailable_pad_returns_409_without_touching_keys(self):
-        self.server.pad = FakePad(available=False, error="未安装 vgamepad（pip install vgamepad）")
+        self.server.pad_pool.close()
+        self.server.pad_pool = pad_control.PadPool(seed=FakePad(available=False, error="未安装 vgamepad（pip install vgamepad）"),
+                                                   lock=self.server.command_lock)
         status, _, body = self.post_pad({"token": "test-token", "pad": {"buttons": ["a"]}})
         self.assertEqual(status, 409, body)
         self.assertEqual(self.controller.calls, [])
+
+    def test_legacy_snapshot_requires_refresh_instead_of_sharing_a_pad(self):
+        status, _, body = self.post_pad({"session": None, "pad": {"buttons": ["a"]}})
+        self.assertEqual(400, status)
+        self.assertEqual("gamepad_session_required", json.loads(body)["errorCode"])
+        self.assertEqual([], self.pad.applied)
 
     def test_shutdown_closes_the_pad(self):
         self.server.shutdown()

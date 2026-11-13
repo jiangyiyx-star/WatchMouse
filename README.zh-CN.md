@@ -27,7 +27,7 @@ Windows 已配置原生手柄支持时，每台手机可以使用独立的 Xbox 
 ## 下载与使用
 
 - Windows：[最新 Windows 发布版](https://github.com/jiangyiyx-star/WatchMouse/releases/latest)。双击启动，首次连接按提示允许专用网络访问。
-- Apple 芯片 Mac：[WatchMouse-Mac-2.7-arm64.zip](https://github.com/jiangyiyx-star/WatchMouse/releases/download/v2.7/WatchMouse-Mac-2.7-arm64.zip)。解压后放进“应用程序”，在系统设置中启用 WatchMouse 的辅助功能权限。
+- Apple 芯片 Mac：[最新 Mac 发布版](https://github.com/jiangyiyx-star/WatchMouse/releases/latest)。解压后放进“应用程序”，在系统设置中启用 WatchMouse 的辅助功能权限。
 
 安装包自带运行环境，不用安装 Python。Mac 下载包支持 macOS 11 及以上，Intel 包尚未验证。Mac 为自签名构建，尚未经过 Apple 公证；首次启动若被阻止，需在隐私与安全设置中确认来源后选择“仍要打开”。
 
@@ -50,10 +50,10 @@ Windows 已配置原生手柄支持时，每台手机可以使用独立的 Xbox 
 
 ## 功能
 
-- **鼠标**：单指移动、轻点单击、左右键、拖动开关、双指滚动和独立单指滚动带。
-- **键鼠**：用手机输入法编辑草稿，确认后发送到电脑，支持中文、emoji、粘贴和输入法语音转文字。
+- **鼠标**：单指移动（支持高速甩动加速度）、轻点单击、双指轻点右键、双击按住自动拖拽、左右键、拖动开关、双指滚动和实时指示的独立单指滚动带。
+- **键鼠**：用手机输入法编辑草稿，确认后发送到电脑（支持防输入法误触的 `Ctrl/Cmd+Enter` 发送），支持中文、emoji、粘贴和输入法语音转文字。
 - **视频**：上一个、播放/暂停、下一个大按钮，适用于支持方向键/空格键的应用。
-- **手柄**：按真实手柄的位置摆放——肩键在两上角，左摇杆在十字键上方（Xbox）或下方（PlayStation），动作键在右摇杆上方，View/Menu 放中间不挡拇指，屏幕中央的接缝处是触控板（拖动移动、轻点左键、长按右键），游戏里也能随时控制光标。手机横过来点右上角全屏按钮可隐藏浏览器和底部栏、锁定横屏；Xbox / PlayStation 布局一键切换。按住即生效、松手就释放。默认映射为键盘，并以硬件扫描码注入，读原始输入的游戏也能收到；游戏若以管理员身份启动，接收器也要用管理员身份运行；Windows 上配置可选的 ViGEmBus 驱动及匹配的 vgamepad 库后自动切为原生模式，电脑识别为 Xbox 360 手柄。
+- **手柄**：按真实手柄的位置摆放——肩键在两上角，左摇杆在十字键上方（Xbox）或下方（PlayStation），十字键支持八向滑动斜角搓招，动作键在右摇杆上方，View/Menu 放中间不挡拇指，屏幕中央的接缝处是触控板（拖动移动、轻点左键、长按右键），游戏里也能随时控制光标。手机横过来点右上角全屏按钮可隐藏浏览器和底部栏、锁定横屏；Xbox / PlayStation 布局一键切换。按住即生效、松手就释放。默认映射为键盘，并以硬件扫描码注入，读原始输入的游戏也能收到；游戏若以管理员身份启动，接收器也要用管理员身份运行；Windows 上配置可选的 ViGEmBus 驱动及匹配的 vgamepad 库后自动切为原生模式，电脑识别为 Xbox 360 手柄。
 - **语言**：手机、Mac 和 Windows 界面默认英文，可选择简体中文并保存选择。
 - **Mac 快捷键**：协议中的 Ctrl/Win 映射为 Command，Alt 映射为 Option。
 - **手表**：提供不用 JavaScript 的 `/watch` 简版，实体 Apple Watch 兼容性尚未实测。

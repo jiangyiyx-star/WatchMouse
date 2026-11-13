@@ -847,6 +847,27 @@ class PairingPersistenceTests(unittest.TestCase):
                     self.assertEqual(token,again['token'])
                     self.assertEqual('zh-CN',again['language'])
 
+    def test_read_asset_caches_in_memory_and_refreshes_on_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            asset = Path(directory) / 'sample.css'
+            asset.write_bytes(b'body{color:#fff}')
+            real_read = Path.read_bytes
+            reads = []
+            def tracked_read(path_obj):
+                reads.append(str(path_obj))
+                return real_read(path_obj)
+            with patch.object(receiver, 'resource_path', side_effect=lambda name: Path(directory) / name), \
+                 patch.object(Path, 'read_bytes', autospec=True, side_effect=tracked_read):
+                self.assertEqual(b'body{color:#fff}', receiver.read_asset('sample.css'))
+                self.assertEqual(b'body{color:#fff}', receiver.read_asset('sample.css'))
+                self.assertEqual(1, len(reads))
+                asset.write_bytes(b'body{color:#000;margin:0}')
+                self.assertEqual(b'body{color:#000;margin:0}', receiver.read_asset('sample.css'))
+                self.assertEqual(2, len(reads))
+                asset.unlink()
+                with self.assertRaises(OSError):
+                    receiver.read_asset('sample.css')
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -14,7 +14,7 @@ py -3 app.py
 powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-The build creates `.build-venv`, packages `dist\WatchMouse-2.8.exe`, verifies all four application modules (`app`, `receiver`, `input_control`, `pad_control`), assets and license notices against the checkout, and copies the result to `dist\WatchMouse.exe`. After dependencies are installed you may use `build.ps1 -SkipInstall`.
+The build creates `.build-venv`, packages `dist\WatchMouse-2.9.exe`, verifies all four application modules (`app`, `receiver`, `input_control`, `pad_control`), assets and license notices against the checkout, and copies the result to `dist\WatchMouse.exe`. After dependencies are installed you may use `build.ps1 -SkipInstall`.
 
 The native gamepad binding remains optional and external. This build does not install or bundle `vgamepad`, its client DLL, or the ViGEmBus driver. The frozen receiver can load an existing package from the current user's Python site-packages; its Python version and DLL architecture must match the EXE (Python 3.14, x64 in the current local build). Keep `vgamepad/win/vigem/client/x64/ViGEmClient.dll` beside the library's Python files in its original relative location. The upstream vgamepad 0.1.0 installer may launch a driver installer, so an already configured computer should reuse its existing files rather than reinstall them during a WatchMouse build.
 

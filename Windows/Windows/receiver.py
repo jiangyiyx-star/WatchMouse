@@ -17,14 +17,30 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from input_control import InputController, elevated
 import pad_control
 
-PORT, VERSION = 53514, "2.8"
+PORT, VERSION = 53514, "2.9"
 ASSETS = {"/": ("remote.html", "text/html"), "/remote.html": ("remote.html", "text/html"),
           "/remote.js": ("remote.js", "text/javascript"), "/remote.css": ("remote.css", "text/css"),
           "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
           "/icon.svg": ("icon.svg", "image/svg+xml")}
+_ASSET_CACHE: dict[str, tuple[tuple[int, int], bytes]] = {}
+_ASSET_LOCK = threading.Lock()
 
 def resource_path(name):
     return Path(getattr(sys, "_MEIPASS", Path(__file__).parent)) / name
+
+def read_asset(name):
+    path = resource_path(name)
+    stat = path.stat()
+    key = str(path)
+    signature = (stat.st_mtime_ns, stat.st_size)
+    with _ASSET_LOCK:
+        cached = _ASSET_CACHE.get(key)
+        if cached and cached[0] == signature:
+            return cached[1]
+    data = path.read_bytes()
+    with _ASSET_LOCK:
+        _ASSET_CACHE[key] = (signature, data)
+    return data
 
 def settings_path():
     if sys.platform == "darwin":
@@ -398,7 +414,7 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path in ASSETS:
             filename, content_type = ASSETS[url.path]
             try:
-                self.reply(200, resource_path(filename).read_bytes(), content_type)
+                self.reply(200, read_asset(filename), content_type)
             except OSError:
                 self.reply(404, {"ok": False, "error": "页面文件缺失"})
         elif url.path == "/favicon.ico":

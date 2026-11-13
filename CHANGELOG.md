@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.9 — 2026-11-13
+
+- Lower latency & compositor-first touch pipeline: 8 ms (~120 Hz) motion batching, `event.getCoalescedEvents()` high-refresh touch sampling, velocity-aware `pointerGain` flick acceleration, once-per-gesture `getBoundingClientRect()` caching across touchpad/sticks/D-pad/mini-trackpad, GPU `translate3d(...)` indicators, immediate native gamepad button dispatch, 12 ms (~83 Hz) analog stick cadence, and `(st_mtime_ns, st_size)` RAM-cached static assets in `receiver.py`.
+- Richer touch & gamepad ergonomics: two-finger tap right-click (`RC`), double-tap-and-hold auto-drag (`MD` → move → `MU`), interactive scroll-rail thumb tracking, and 8-way D-pad thumb-rolling/diagonals.
+- Phone Web UI polish: `oklab` gradient interpolation with fallbacks, `contain: layout style paint` mode isolation, semantic emerald/amber/coral connection status indicator, auto-sizing draft textarea (`field-sizing: content`), IME-safe `Enter` / `Ctrl+Enter` (`isComposing || keyCode === 229`), light-dismiss + `Escape` connection sheet, live sensitivity readout, and subtle haptic feedback.
+- Windows desktop UI polish: semantic status pill with dot indicator, crimson accent bar on the primary QR card, lock-free live receiver telemetry (`native pad seats` / `actions`), and instant copy-link confirmation.
+
 ## 2.8 — 2026-10-25
 
 - Independent native Xbox 360 controllers for up to four active phone browsers on Windows, with automatic WatchMouse P1–P4 seats, session-specific state and ordered snapshots.

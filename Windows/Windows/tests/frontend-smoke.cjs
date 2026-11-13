@@ -1075,5 +1075,142 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
   assert(!buttonOn(expiredJoin, 'a').classList.contains('is-pressed'));
   assert.deepEqual(expiredRoom.outputs.get(1).buttons, [], 'expired state session rejoins with empty input');
 
-  console.log('PASS: mouse/keyboard/performance regressions, single-player keyboard fallback, independent P1/P2 native sessions, neutral heartbeat, sequence-fenced rotation/blur, pending-join cancellation, stale session snapshots, fifth-player full/retry, idempotent lost-ACK join and expired-generation recovery.');
+  // New smoothness & UI ergonomics regression suite:
+  // 1. Two-finger tap -> Right Click (RC), while two-finger scroll never misfires RC.
+  const gestures = createApp(); await wait();
+  gestures.elements.touchpad.emit('pointerdown', {pointerId: 601, pointerType: 'touch', clientX: 100, clientY: 100, timeStamp: 10});
+  gestures.elements.touchpad.emit('pointerdown', {pointerId: 602, pointerType: 'touch', clientX: 140, clientY: 100, timeStamp: 14});
+  gestures.elements.touchpad.emit('pointerup', {pointerId: 601, clientX: 101, clientY: 101, timeStamp: 60});
+  gestures.elements.touchpad.emit('pointerup', {pointerId: 602, clientX: 141, clientY: 100, timeStamp: 64});
+  await settle(gestures);
+  assert.deepEqual(gestures.records.map(packet => packet.command), ['RC'], 'two-finger tap dispatches right-click');
+  assert.equal(gestures.rectReads(), 1, 'second finger reuses cached touchpad geometry');
+  gestures.elements.touchpad.emit('pointerdown', {pointerId: 603, pointerType: 'touch', clientX: 100, clientY: 100, timeStamp: 100});
+  gestures.elements.touchpad.emit('pointerdown', {pointerId: 604, pointerType: 'touch', clientX: 140, clientY: 100, timeStamp: 104});
+  gestures.elements.touchpad.emit('pointermove', {pointerId: 603, clientX: 100, clientY: 160, timeStamp: 130});
+  gestures.elements.touchpad.emit('pointermove', {pointerId: 604, clientX: 140, clientY: 160, timeStamp: 132});
+  gestures.elements.touchpad.emit('pointerup', {pointerId: 603, clientX: 100, clientY: 160, timeStamp: 150});
+  gestures.elements.touchpad.emit('pointerup', {pointerId: 604, clientX: 140, clientY: 160, timeStamp: 152});
+  await settle(gestures);
+  assert.equal(gestures.records.filter(packet => packet.command === 'RC').length, 1, 'two-finger scroll never triggers right-click');
+  assert(gestures.records.some(packet => packet.command?.startsWith('S ')), 'two-finger scroll emits wheel steps');
+
+  // 2. Double-tap-and-hold auto-drag (MD -> move -> MU), while stationary double-tap stays two clicks.
+  const autoDrag = createApp(); await wait();
+  autoDrag.elements.touchpad.emit('pointerdown', {pointerId: 610, pointerType: 'touch', clientX: 80, clientY: 80, timeStamp: 10});
+  autoDrag.elements.touchpad.emit('pointerup', {pointerId: 610, clientX: 80, clientY: 80, timeStamp: 40});
+  autoDrag.elements.touchpad.emit('pointerdown', {pointerId: 611, pointerType: 'touch', clientX: 82, clientY: 82, timeStamp: 120});
+  autoDrag.elements.touchpad.emit('pointermove', {pointerId: 611, clientX: 110, clientY: 82, timeStamp: 150});
+  autoDrag.elements.touchpad.emit('pointermove', {pointerId: 611, clientX: 140, clientY: 82, timeStamp: 180});
+  autoDrag.elements.touchpad.emit('pointerup', {pointerId: 611, clientX: 140, clientY: 82, timeStamp: 210});
+  await settle(autoDrag);
+  assert.equal(autoDrag.records[0].command, 'C');
+  assert.equal(autoDrag.records[1].command, 'MD', 'moving after a quick second tap engages auto-drag before motion');
+  assert(autoDrag.records.some(packet => packet.command?.startsWith('M ')));
+  assert.equal(autoDrag.records.at(-1).command, 'MU', 'lifting finger cleanly ends auto-drag');
+  assert.equal(autoDrag.elements.dragButton.attributes['aria-pressed'], 'false');
+
+  const dblClick = createApp(); await wait();
+  dblClick.elements.touchpad.emit('pointerdown', {pointerId: 612, pointerType: 'touch', clientX: 50, clientY: 50, timeStamp: 10});
+  dblClick.elements.touchpad.emit('pointerup', {pointerId: 612, clientX: 50, clientY: 50, timeStamp: 35});
+  dblClick.elements.touchpad.emit('pointerdown', {pointerId: 613, pointerType: 'touch', clientX: 51, clientY: 50, timeStamp: 110});
+  dblClick.elements.touchpad.emit('pointerup', {pointerId: 613, clientX: 51, clientY: 50, timeStamp: 140});
+  await settle(dblClick);
+  assert.deepEqual(dblClick.records.map(packet => packet.command), ['C', 'C'], 'stationary double-tap emits two clean clicks without drag');
+
+  // 3. Velocity-aware pointer acceleration + coalesced high-rate touch samples.
+  const slowSwipe = createApp(); await wait();
+  slowSwipe.elements.sensitivity.value = '1'; slowSwipe.elements.sensitivity.emit('input');
+  slowSwipe.elements.touchpad.emit('pointerdown', {pointerId: 620, pointerType: 'touch', clientX: 0, clientY: 0, timeStamp: 100});
+  slowSwipe.elements.touchpad.emit('pointermove', {pointerId: 620, clientX: 8, clientY: 0, timeStamp: 140});
+  slowSwipe.elements.touchpad.emit('pointermove', {pointerId: 620, clientX: 16, clientY: 0, timeStamp: 180});
+  slowSwipe.elements.touchpad.emit('pointerup', {pointerId: 620, clientX: 16, clientY: 0, timeStamp: 220});
+  await settle(slowSwipe);
+  assert.deepEqual(movementTotal(slowSwipe), [16, 0], 'fine low-speed motion stays 1:1 without acceleration');
+
+  const fastFlick = createApp(); await wait();
+  fastFlick.elements.sensitivity.value = '1'; fastFlick.elements.sensitivity.emit('input');
+  fastFlick.elements.touchpad.emit('pointerdown', {pointerId: 621, pointerType: 'touch', clientX: 0, clientY: 0, timeStamp: 100});
+  fastFlick.elements.touchpad.emit('pointermove', {
+    pointerId: 621, clientX: 40, clientY: 0, timeStamp: 116,
+    getCoalescedEvents: () => [
+      {clientX: 20, clientY: 0, timeStamp: 108},
+      {clientX: 40, clientY: 0, timeStamp: 116}
+    ]
+  });
+  fastFlick.elements.touchpad.emit('pointerup', {pointerId: 621, clientX: 40, clientY: 0, timeStamp: 124});
+  await settle(fastFlick);
+  assert(movementTotal(fastFlick)[0] >= 60, 'high-velocity coalesced flick accelerates smoothly across the screen');
+
+  // 4. Cached geometry (1 layout read per gesture) for sticks, 8-way D-pad thumb-roll, and padTrackpad.
+  const padPerfRoom = createPadHub();
+  const padPerf = createApp('gamepad', nativeStatus, {padHub: padPerfRoom}); await wait(); await wait();
+  const withBox = node => {
+    const base = node.getBoundingClientRect.bind(node);
+    node.getBoundingClientRect = () => ({...base(), width: 120, height: 120});
+    return node;
+  };
+  const perfLeftStick = withBox(padPerf.document.querySelector('#gamepadPanel .stick'));
+  const perfDpad = withBox(padPerf.document.querySelector('#gamepadPanel .dpad'));
+  const dupBtn = buttonOn(padPerf, 'dup');
+  const padTrack = withBox(padPerf.elements.padTrackpad);
+
+  const stickReadsBefore = padPerf.rectReads();
+  perfLeftStick.emit('pointerdown', {pointerId: 630, button: 0, clientX: 60, clientY: 60});
+  for (let i = 1; i <= 20; i++) perfLeftStick.emit('pointermove', {pointerId: 630, clientX: 60 + i * 2, clientY: 60});
+  perfLeftStick.emit('pointerup', {pointerId: 630, clientX: 100, clientY: 60});
+  await settlePad();
+  assert.equal(padPerf.rectReads() - stickReadsBefore, 1, 'analog stick caches bounding rect once for entire drag');
+  assert(perfDpad !== null);
+
+  const dpadReadsBefore = padPerf.rectReads();
+  dupBtn.emit('pointerdown', {pointerId: 631, button: 0, clientX: 60, clientY: 12});
+  await settlePad();
+  assert.deepEqual(padPerfRoom.outputs.get(1).buttons, ['dup']);
+  dupBtn.emit('pointermove', {pointerId: 631, clientX: 106, clientY: 14});
+  await settlePad();
+  assert.deepEqual([...padPerfRoom.outputs.get(1).buttons].sort(), ['dright', 'dup'], 'thumb-rolling into corner activates 8-way diagonal');
+  dupBtn.emit('pointermove', {pointerId: 631, clientX: 110, clientY: 60});
+  await settlePad();
+  assert.deepEqual(padPerfRoom.outputs.get(1).buttons, ['dright'], 'continuing roll transitions cleanly to cardinal right');
+  dupBtn.emit('pointerup', {pointerId: 631, clientX: 110, clientY: 60});
+  await settlePad();
+  assert.deepEqual(padPerfRoom.outputs.get(1).buttons, []);
+  assert.equal(padPerf.rectReads() - dpadReadsBefore, 1, '8-way D-pad roll reads layout once per gesture');
+
+  const trackReadsBefore = padPerf.rectReads();
+  padTrack.emit('pointerdown', {pointerId: 632, pointerType: 'touch', button: 0, clientX: 60, clientY: 60, timeStamp: 10});
+  for (let i = 1; i <= 15; i++) padTrack.emit('pointermove', {pointerId: 632, clientX: 60 + i * 2, clientY: 60, timeStamp: 10 + i * 16});
+  padTrack.emit('pointerup', {pointerId: 632, clientX: 90, clientY: 60, timeStamp: 260});
+  await settle(padPerf);
+  assert.equal(padPerf.rectReads() - trackReadsBefore, 1, 'gamepad mini-trackpad reads layout once per gesture');
+
+  // 5. IME-safe Enter/Ctrl+Enter, Escape & light-dismiss connection sheet, and live speed readout.
+  const uiPolish = createApp(); await wait();
+  assert.equal(uiPolish.elements.speedValue.textContent, '1.4×');
+  uiPolish.elements.sensitivity.value = '2.2'; uiPolish.elements.sensitivity.emit('input');
+  assert.equal(uiPolish.elements.speedValue.textContent, '2.2×');
+  uiPolish.elements.connectionButton.click();
+  assert.equal(uiPolish.elements.connectionPanel.hidden, false);
+  uiPolish.elements.pairingCode.value = 'composing-token-123';
+  uiPolish.elements.pairingCode.emit('keydown', {key: 'Enter', isComposing: true});
+  uiPolish.elements.pairingCode.emit('keydown', {key: 'Enter', keyCode: 229});
+  assert.notEqual(uiPolish.stored.get('watchmouse_token'), 'composing-token-123', 'IME candidate confirmation must not submit pairing');
+  uiPolish.document.emit('keydown', {key: 'Escape'});
+  assert.equal(uiPolish.elements.connectionPanel.hidden, true, 'Escape dismisses connection sheet');
+  uiPolish.elements.connectionButton.click();
+  assert.equal(uiPolish.elements.connectionPanel.hidden, false);
+  uiPolish.elements.touchpad.emit('pointerdown', {pointerId: 640, pointerType: 'touch', clientX: 20, clientY: 20, timeStamp: 10});
+  uiPolish.elements.touchpad.emit('pointerup', {pointerId: 640, clientX: 40, clientY: 20, timeStamp: 40});
+  await settle(uiPolish);
+  assert.equal(uiPolish.elements.connectionPanel.hidden, true, 'touching touchpad light-dismisses connection sheet');
+  uiPolish.elements.keyboardModeButton.click();
+  uiPolish.draft('Hello IME');
+  uiPolish.elements.textInput.emit('keydown', {key: 'Enter', ctrlKey: true, isComposing: true});
+  assert(!uiPolish.records.some(packet => packet.text), 'Ctrl+Enter during IME composition does not send');
+  uiPolish.elements.textInput.emit('keydown', {key: 'Enter', ctrlKey: true, isComposing: false});
+  await settle(uiPolish);
+  assert.equal(uiPolish.records.at(-1).text, 'Hello IME', 'Ctrl+Enter submits draft when not composing');
+
+  console.log('PASS: mouse/keyboard/performance regressions, two-finger RC, double-tap drag, flick acceleration, 8-way D-pad & cached rects, IME-safe shortcuts, single-player keyboard fallback, independent P1/P2 native sessions, neutral heartbeat, sequence-fenced rotation/blur, pending-join cancellation, stale session snapshots, fifth-player full/retry, idempotent lost-ACK join and expired-generation recovery.');
 })().catch(error => {console.error(error); process.exitCode = 1;});

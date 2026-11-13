@@ -24,9 +24,9 @@ import receiver
 
 APP_TITLE = "WatchMouse · Phone keyboard and mouse"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "WatchMouse"
-BG, CARD, TEXT, MUTED, ACCENT = "#0d0e12", "#191b22", "#eef0f5", "#9295a3", "#d92746"
-BORDER, INSET = "#303441", "#111218"
-ACCENT_TEXT, WHITE = "#ff657c", "#ffffff"
+BG, CARD, TEXT, MUTED, ACCENT = "#0d0e12", "#171922", "#f1f3f9", "#9499ab", "#e02849"
+BORDER, INSET = "#2c3140", "#101219"
+ACCENT_TEXT, WHITE, OK_GREEN, WARN_AMBER, ERR_CORAL = "#ff7086", "#ffffff", "#2ee59d", "#f5a524", "#ff8f7a"
 LANGUAGES = {"English": "en", "中文": "zh-CN"}
 ENGLISH = {
     "WatchMouse · 手机键盘和鼠标": APP_TITLE,
@@ -96,6 +96,9 @@ ENGLISH = {
     '手机未连接时，检查同一 Wi-Fi 与专用网络设置。': 'Check the same Wi-Fi and private network settings if your phone cannot connect.',
     '请复制连接链接': 'Copy the connection link',
     '正在查找局域网地址…': 'Finding local network addresses…',
+    '✓ 已复制连接链接': '✓ Link copied',
+    '原生手柄 ({active}/{max}) · 已响应 {count} 次': 'Native pad ({active}/{max}) · {count} actions',
+    '键盘手柄映射 · 已响应 {count} 次': 'Keyboard pad · {count} actions',
     "演示": "Demo",
     "演示模式：示例地址与二维码，不会连接或控制电脑。": "Demo: sample address and QR code. No connection or computer control.",
 }
@@ -345,6 +348,10 @@ class WatchMouseApp:
         self.address_thread = None
         self.service_generation = 0
         self.qr_cache_key = None
+        self._last_health_data = None
+        self._copy_feedback_active = False
+        self._copy_feedback_token = 0
+        self.status_state = "starting"
         self.update_title()
         icon_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "app.ico"
         if icon_path.exists():
@@ -368,6 +375,7 @@ class WatchMouseApp:
         self.refresh_addresses()
         if demo:
             self.status.set("演示")
+            self.set_status_visual("demo")
             self.detail_var.set("演示模式：示例地址与二维码，不会连接或控制电脑。")
             self.network_var.set("")
             if screenshot:
@@ -412,10 +420,83 @@ class WatchMouseApp:
         self.update_title()
         for widget, source in self.localized_widgets:
             widget.configure(text=self.tr(source))
+        if self._copy_feedback_active:
+            self.copy_button.configure(text=self.tr("✓ 已复制连接链接"))
         for variable in self.localized_variables:
             variable.refresh()
         if not self.demo:
             self.notice.set("语言已保存，下次启动会自动使用。")
+
+    def set_status_visual(self, state):
+        palette = {
+            "starting": ("#3d3320", "#1b1814", WARN_AMBER),
+            "running": ("#1f4236", "#121d1a", OK_GREEN),
+            "stopped": (BORDER, CARD, MUTED),
+            "error": ("#4a282c", "#1f1417", ERR_CORAL),
+            "demo": ("#462430", "#1c1318", ACCENT_TEXT),
+        }
+        border_bg, inner_bg, fg = palette.get(state, palette["starting"])
+        self.status_state = state
+        self.status_pill.configure(bg=border_bg)
+        self.status_inner.configure(bg=inner_bg)
+        self.status_dot.configure(bg=inner_bg, fg=fg)
+        self.status_label.configure(bg=inner_bg, fg=fg)
+
+    def refresh_telemetry(self, snapshot=None):
+        if self.demo or self.busy or self.status_state == "error" or not (self.server or self.borrowed):
+            if self.telemetry_var.source != "":
+                self.telemetry_var.set("")
+            return
+        count = None
+        native = False
+        active = 0
+        max_pads = 4
+        if self.server is not None:
+            raw_count = getattr(self.server, "command_count", None)
+            if isinstance(raw_count, int) and not isinstance(raw_count, bool):
+                count = raw_count
+                pad_pool = getattr(self.server, "pad_pool", None)
+                sessions = getattr(pad_pool, "_sessions", None)
+                if isinstance(sessions, dict):
+                    native = bool(getattr(pad_pool, "available", False)) and not bool(getattr(pad_pool, "_closed", False))
+                    active = len(sessions)
+                else:
+                    info_fn = getattr(pad_pool, "info", None)
+                    pad_info = info_fn() if callable(info_fn) else None
+                    if isinstance(pad_info, dict) and isinstance(pad_info.get("activeGamepads"), int):
+                        native = bool(pad_info.get("nativeGamepad"))
+                        active = pad_info["activeGamepads"]
+                        max_pads = pad_info["maxGamepads"] if isinstance(pad_info.get("maxGamepads"), int) else 4
+                    elif isinstance(snapshot, dict):
+                        native = bool(snapshot.get("nativeGamepad"))
+                        active = snapshot["activeGamepads"] if isinstance(snapshot.get("activeGamepads"), int) else 0
+                        max_pads = snapshot["maxGamepads"] if isinstance(snapshot.get("maxGamepads"), int) else 4
+            elif isinstance(snapshot, dict):
+                raw_snap = snapshot.get("commandCount")
+                if isinstance(raw_snap, int) and not isinstance(raw_snap, bool):
+                    count = raw_snap
+                    native = bool(snapshot.get("nativeGamepad"))
+                    active = snapshot["activeGamepads"] if isinstance(snapshot.get("activeGamepads"), int) else 0
+                    max_pads = snapshot["maxGamepads"] if isinstance(snapshot.get("maxGamepads"), int) else 4
+        else:
+            data = snapshot if isinstance(snapshot, dict) else self._last_health_data
+            if isinstance(data, dict):
+                raw_snap = data.get("commandCount")
+                if isinstance(raw_snap, int) and not isinstance(raw_snap, bool):
+                    count = raw_snap
+                    native = bool(data.get("nativeGamepad"))
+                    active = data["activeGamepads"] if isinstance(data.get("activeGamepads"), int) else 0
+                    max_pads = data["maxGamepads"] if isinstance(data.get("maxGamepads"), int) else 4
+        if count is None:
+            if self.telemetry_var.source != "":
+                self.telemetry_var.set("")
+            return
+        if native:
+            text = LocalizedText("原生手柄 ({active}/{max}) · 已响应 {count} 次", {"active": active, "max": max_pads, "count": count})
+        else:
+            text = LocalizedText("键盘手柄映射 · 已响应 {count} 次", {"count": count})
+        if self.telemetry_var.source != text:
+            self.telemetry_var.set(text)
 
     def capture_demo(self, output):
         """Capture this real demo window; never include live pairing settings."""
@@ -537,25 +618,36 @@ class WatchMouseApp:
         mark.create_line(px(15), px(3), px(15), px(13), fill=ACCENT, width=1.8 * self.ui_scale)
         mark.create_line(px(5), px(14), px(25), px(14), fill=ACCENT, width=1.8 * self.ui_scale)
         self.localized_widget(ttk.Label, header, text="WatchMouse", font=("Segoe UI", 23, "bold")).pack(side="left")
+        self.status_pill = tk.Frame(header, bg=BORDER, bd=0, padx=1, pady=1)
+        self.status_pill.pack(side="right")
+        self.status_inner = tk.Frame(self.status_pill, bg=CARD, bd=0, padx=px(10), pady=px(4))
+        self.status_inner.pack()
+        self.status_dot = tk.Label(self.status_inner, text="●", bg=CARD, fg=WARN_AMBER,
+                                   font=("Segoe UI", 8), bd=0, padx=0, pady=0)
+        self.status_dot.pack(side="left", padx=(0, px(6)))
         self.status = LocalizedStringVar(self, value="正在启动…")
-        self.status_label = tk.Label(header, textvariable=self.status, bg=BG, fg=ACCENT_TEXT,
-                                     font=("Microsoft YaHei UI", 9), padx=px(10), pady=px(5))
-        self.status_label.pack(side="right")
+        self.status_label = tk.Label(self.status_inner, textvariable=self.status, bg=CARD, fg=WARN_AMBER,
+                                     font=("Microsoft YaHei UI", 9, "bold"), bd=0, padx=0, pady=0)
+        self.status_label.pack(side="left")
+        self.set_status_visual("starting")
         self.language_var = tk.StringVar(value=next(label for label, code in LANGUAGES.items() if code == self.language))
         language_select = ttk.Combobox(header, textvariable=self.language_var, values=list(LANGUAGES), state="readonly", width=8)
-        language_select.pack(side="right", padx=(px(10), 0))
+        language_select.pack(side="right", padx=(px(10), px(10)))
         language_select.bind("<<ComboboxSelected>>", self.change_language)
         self.localized_widget(ttk.Label, outer, text="同一 Wi-Fi，扫码连接手机。", foreground=MUTED,
                   font=("Microsoft YaHei UI", 11)).pack(anchor="w", pady=(px(12), px(22)))
 
         connection_border = tk.Frame(outer, bg=BORDER, bd=0)
         connection_border.pack(fill="x")
+        tk.Frame(connection_border, bg=ACCENT, height=max(2, round(2 * self.ui_scale)), bd=0).pack(fill="x", padx=1, pady=(1, 0))
         connection = ttk.Frame(connection_border, style="Card.TFrame", padding=px(22))
-        connection.pack(fill="both", expand=True, padx=1, pady=1)
+        connection.pack(fill="both", expand=True, padx=1, pady=(0, 1))
         connection.columnconfigure(1, weight=1)
         qr_column = ttk.Frame(connection, style="Card.TFrame")
         qr_column.grid(row=0, column=0, sticky="n", padx=(0, px(28)))
-        qr_plate = tk.Frame(qr_column, bg="white", padx=px(8), pady=px(8))
+        qr_frame = tk.Frame(qr_column, bg="#2a2f3f", bd=0, padx=1, pady=1)
+        qr_frame.pack()
+        qr_plate = tk.Frame(qr_frame, bg="white", padx=px(8), pady=px(8))
         qr_plate.pack()
         self.qr_text = LocalizedStringVar(self, value="二维码加载中")
         self.qr_label = tk.Label(qr_plate, textvariable=self.qr_text, width=27, height=12, bg="white", fg=BG,
@@ -595,6 +687,9 @@ class WatchMouseApp:
         service_heading.pack(fill="x")
         self.localized_widget(ttk.Label, service_heading, text="接收器", style="Card.TLabel", font=("Microsoft YaHei UI", 10, "bold")).pack(side="left")
         self.localized_widget(ttk.Label, service_heading, text=LocalizedText("端口 {port}", {"port": self.port}), style="Muted.TLabel").pack(side="right")
+        self.telemetry_var = LocalizedStringVar(self, value="")
+        self.telemetry_label = ttk.Label(service_heading, textvariable=self.telemetry_var, style="Muted.TLabel")
+        self.telemetry_label.pack(side="right", padx=(0, px(12)))
         self.detail_var = LocalizedStringVar(self, value="打开应用后自动启动。")
         detail_label = ttk.Label(details, textvariable=self.detail_var, style="Muted.TLabel", wraplength=px(700))
         detail_label.pack(anchor="w", pady=(px(8), px(12)))
@@ -707,6 +802,20 @@ class WatchMouseApp:
         self.root.clipboard_clear()
         self.root.clipboard_append(self.link_var.get())
         self.notice.set("手机连接链接已复制。")
+        self._copy_feedback_active = True
+        self._copy_feedback_token += 1
+        token = self._copy_feedback_token
+        self.copy_button.configure(text=self.tr("✓ 已复制连接链接"))
+        self.link_entry.configure(highlightbackground=OK_GREEN)
+
+        def reset_feedback():
+            if self.closing or self._copy_feedback_token != token:
+                return
+            self._copy_feedback_active = False
+            self.copy_button.configure(text=self.tr("复制连接链接"))
+            self.link_entry.configure(highlightbackground=BORDER)
+
+        self.root.after(1600, reset_feedback)
 
     def open_browser(self):
         if self.demo:
@@ -733,6 +842,8 @@ class WatchMouseApp:
         self.busy = True
         self.service_generation += 1
         self.status.set("正在启动…")
+        self.set_status_visual("starting")
+        self.refresh_telemetry()
         self.update_buttons()
         self.operation_thread = threading.Thread(target=self.start_worker, daemon=True)
         self.operation_thread.start()
@@ -805,10 +916,12 @@ class WatchMouseApp:
         self.busy = True
         self.service_generation += 1
         self.status.set("正在停止…")
+        self.set_status_visual("starting")
         self.update_buttons()
         with self.server_lock:
             server = self.server
             self.server = None
+        self.refresh_telemetry()
         def worker():
             try:
                 shutdown_server(server)
@@ -828,11 +941,14 @@ class WatchMouseApp:
             self.health_pending = True
             generation, port, token = self.service_generation, self.port, self.token
             def worker():
+                data = None
                 try:
                     data = request_json(port, token)
                     healthy = data.get("app") == "WatchMouse" and bool(data.get("paired"))
                 except Exception:
                     healthy = False
+                if healthy and isinstance(data, dict):
+                    self._last_health_data = data
                 self.events.put(("health", (generation, healthy)))
             threading.Thread(target=worker, daemon=True).start()
         self.root.after(3000, self.health_check)
@@ -846,23 +962,30 @@ class WatchMouseApp:
                 if kind in ("started", "borrowed"):
                     self.busy = False
                     self.borrowed = kind == "borrowed"
+                    if isinstance(value, dict):
+                        self._last_health_data = value
                     self.status.set("服务运行中")
-                    self.status_label.configure(fg=ACCENT_TEXT)
+                    self.set_status_visual("running")
                     self.detail_var.set(
                         "已连接另一进程中的 WatchMouse 接收器。关闭此窗口会保留该服务。" if self.borrowed else
                         LocalizedText("服务已启动，端口 {port}。手机扫码后，在电脑上点选要操作的窗口。", {"port": self.port})
                     )
+                    self.refresh_telemetry(value if isinstance(value, dict) else None)
                     self.update_link()
                 elif kind == "stopped":
                     self.busy = False
+                    self._last_health_data = None
                     self.status.set("服务已停止")
+                    self.set_status_visual("stopped")
+                    self.refresh_telemetry()
                     self.detail_var.set("手机控制已停止。点击“启动服务”继续使用。")
                     if value:
                         self.start()
                 elif kind == "error":
                     self.busy = False
                     self.status.set("启动失败")
-                    self.status_label.configure(fg="#ffac91")
+                    self.set_status_visual("error")
+                    self.refresh_telemetry()
                     self.detail_var.set(value)
                 elif kind == "health":
                     self.health_pending = False
@@ -871,12 +994,14 @@ class WatchMouseApp:
                         continue
                     if value:
                         self.status.set("服务运行中")
-                        self.status_label.configure(fg=ACCENT_TEXT)
+                        self.set_status_visual("running")
+                        self.refresh_telemetry(self._last_health_data if self.borrowed else None)
                     else:
                         self.status.set("服务无响应")
-                        self.status_label.configure(fg="#ffac91")
+                        self.set_status_visual("error")
                         if self.borrowed:
                             self.borrowed = False
+                        self.refresh_telemetry()
                 elif kind == "network":
                     self.network_warning = value
                     if value:
@@ -892,6 +1017,8 @@ class WatchMouseApp:
                         self.network_var.set(value.get("message", "请检查 Windows 防火墙设置"))
         except queue.Empty:
             pass
+        if (self.server or self.borrowed) and not self.busy and self.status_state == "running":
+            self.refresh_telemetry(self._last_health_data if self.borrowed else None)
         self.update_buttons()
         self.poll_firewall_result()
         active = self.busy or self.addresses_pending or self.firewall_pending

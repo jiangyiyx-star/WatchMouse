@@ -264,6 +264,51 @@ class AppPerformanceTests(unittest.TestCase):
         self.assertIsNone(app.server)
         self.assertEqual("error", app.events.get_nowait()[0])
 
+    def test_status_pill_visuals_and_live_telemetry_localize(self):
+        app = self.app()
+        self.assertEqual("starting", app.status_state)
+        self.assertEqual(desktop.WARN_AMBER, app.status_dot["fg"])
+        fake_pool = types.SimpleNamespace(available=True, _closed=False, _sessions={"s1": {}, "s2": {}})
+        app.server = types.SimpleNamespace(command_count=18, pad_pool=fake_pool)
+        app.events.put(("started", {"app": "WatchMouse", "paired": True, "commandCount": 18, "nativeGamepad": True, "activeGamepads": 2, "maxGamepads": 4}))
+        app.poll_events()
+        self.assertEqual("running", app.status_state)
+        self.assertEqual(desktop.OK_GREEN, app.status_dot["fg"])
+        self.assertEqual("Native pad (2/4) · 18 actions", app.telemetry_var.get())
+        app.language_var.set("中文")
+        app.change_language()
+        self.assertEqual("原生手柄 (2/4) · 已响应 18 次", app.telemetry_var.get())
+        fake_pool.available = False
+        app.server.command_count = 25
+        app.poll_events()
+        self.assertEqual("键盘手柄映射 · 已响应 25 次", app.telemetry_var.get())
+        app.events.put(("health", (app.service_generation, False)))
+        app.poll_events()
+        self.assertEqual("error", app.status_state)
+        self.assertEqual(desktop.ERR_CORAL, app.status_dot["fg"])
+        self.assertEqual("", app.telemetry_var.get())
+        app.server = None
+        app.events.put(("stopped", False))
+        app.poll_events()
+        self.assertEqual("stopped", app.status_state)
+        self.assertEqual(desktop.MUTED, app.status_dot["fg"])
+
+    def test_copy_link_gives_tactile_button_feedback_and_restores_cleanly(self):
+        app = self.app()
+        app.link_var.set("http://192.168.1.10:53514/?token=TEST")
+        app.root.scheduled.clear()
+        app.copy_link()
+        self.assertEqual("✓ Link copied", app.copy_button["text"])
+        self.assertEqual(desktop.OK_GREEN, app.link_entry["highlightbackground"])
+        app.language_var.set("中文")
+        app.change_language()
+        self.assertEqual("✓ 已复制连接链接", app.copy_button["text"])
+        delay, reset_callback = app.root.scheduled[-1]
+        self.assertEqual(1600, delay)
+        reset_callback()
+        self.assertEqual("复制连接链接", app.copy_button["text"])
+        self.assertEqual(desktop.BORDER, app.link_entry["highlightbackground"])
+
 
 # Save the method before setUp patches it so QR tests can exercise its real logic.
 REAL_UPDATE_LINK = desktop.WatchMouseApp.update_link

@@ -34,7 +34,7 @@ Screenshots show the actual interface using demo data. The displayed demo QR cod
 | Platform | Download | First start |
 | --- | --- | --- |
 | Windows | [Latest Windows release](https://github.com/jiangyiyx-star/WatchMouse/releases/latest) | Open the EXE. Allow its connection on your trusted private network if prompted. |
-| Apple silicon Mac | [WatchMouse-Mac-2.7-arm64.zip](https://github.com/jiangyiyx-star/WatchMouse/releases/download/v2.7/WatchMouse-Mac-2.7-arm64.zip) | Unzip and move WatchMouse to Applications. Enable its Accessibility permission in System Settings. |
+| Apple silicon Mac | [Latest macOS release](https://github.com/jiangyiyx-star/WatchMouse/releases/latest) | Unzip and move WatchMouse to Applications. Enable its Accessibility permission in System Settings. |
 
 Desktop builds include Python and the web UI. You do not need to install Python to use them. The Mac download targets Apple silicon and macOS 11 or later; an Intel Mac build has not been validated. These builds are not commercially code-signed; the Mac app is ad-hoc signed and not Apple-notarized.
 
@@ -57,10 +57,10 @@ Leaving gamepad mode or hiding the page releases its controls. An active neutral
 
 ## What it does
 
-- **Mouse:** one-finger movement, tap to click, left/right buttons, drag toggle, two-finger scrolling, and a separate one-finger scroll strip.
-- **Keyboard:** draft text on your phone and send it when ready. Supports Chinese, emoji, phone IME, and keyboard dictation. Text and input events go to the focused desktop app.
+- **Mouse:** one-finger movement with velocity-aware flick acceleration, tap to click, two-finger tap right-click, double-tap-and-hold auto-drag, left/right buttons, drag toggle, two-finger scrolling, and an interactive one-finger scroll strip.
+- **Keyboard:** draft text on your phone and send it when ready (with IME-safe `Ctrl/Cmd+Enter` submit). Supports Chinese, emoji, phone IME, and keyboard dictation. Text and input events go to the focused desktop app.
 - **Video:** large previous, play/pause, and next buttons for apps that respond to arrow/space keys.
-- **Gamepad:** laid out like a real controller — shoulders in the top corners, left stick above the d-pad (Xbox) or below it (PlayStation), face buttons above the right stick, View/Menu in the middle out of thumb reach, the centre seam holds a trackpad (drag to move, tap to click, hold to right-click), so you can still aim a cursor mid-game. Turn the phone sideways and tap the fullscreen button to hide the browser chrome and lock the orientation. Xbox and PlayStation layouts switch in one tap. Buttons hold down while pressed and release on lift. Keys map to the keyboard and are injected as hardware scancodes, so games that read raw input still see them; if a game is launched as administrator, run the receiver as administrator too. On Windows with the optional ViGEmBus driver and a matching vgamepad binding the phone switches to native mode and the computer sees a real Xbox 360 controller.
+- **Gamepad:** laid out like a real controller — shoulders in the top corners, left stick above the d-pad (Xbox) or below it (PlayStation), face buttons above the right stick, View/Menu in the middle out of thumb reach, 8-way D-pad thumb-rolling for diagonals, and the centre seam holds a trackpad (drag to move, tap to click, hold to right-click), so you can still aim a cursor mid-game. Turn the phone sideways and tap the fullscreen button to hide the browser chrome and lock the orientation. Xbox and PlayStation layouts switch in one tap. Buttons hold down while pressed and release on lift. Keys map to the keyboard and are injected as hardware scancodes, so games that read raw input still see them; if a game is launched as administrator, run the receiver as administrator too. On Windows with the optional ViGEmBus driver and a matching vgamepad binding the phone switches to native mode and the computer sees a real Xbox 360 controller.
 - **Language:** English by default, with saved Simplified Chinese selection on the phone and both desktop receivers.
 - **Mac shortcuts:** protocol Ctrl/Win modifiers map to Command; Alt maps to Option.
 - **Watch:** an experimental JavaScript-free `/watch` page. Physical Apple Watch compatibility has not been verified.

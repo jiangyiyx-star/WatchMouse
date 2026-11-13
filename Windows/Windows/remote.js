@@ -5,6 +5,9 @@
     get(key) { try { return localStorage.getItem(key); } catch (_) { return null; } },
     set(key, value) { try { localStorage.setItem(key, value); } catch (_) {} }
   };
+  function pulseHaptic(duration = 8) {
+    try { if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') navigator.vibrate(duration); } catch (_) {}
+  }
   const messages = {
     en: {
       watch: 'Watch ↗', left: 'Left', drag: 'Drag', right: 'Right', connect: 'Connect', speed: 'Speed',
@@ -20,7 +23,9 @@
       padTrackpad: 'Pad trackpad: drag to move the cursor, tap to click, hold still to right-click',
       padTrackpadLabel: 'Trackpad', padTrackpadHint: 'Drag to move · tap to click · hold to right-click',
       leftStick: 'Left stick', rightStick: 'Right stick', dpad: 'D-pad', faceButtons: 'Face buttons',
-      mouseControls: 'Mouse controls', touchpad: 'Touchpad: move with one finger, tap to click, scroll with two fingers',
+      mouseControls: 'Mouse controls',
+      touchpad: 'Touchpad: move with one finger, tap to click, two-finger tap to right-click, two-finger slide to scroll',
+      touchpadHint: 'Tap: left · 2-finger tap: right · 2-finger slide: scroll',
       leftClick: 'Left click', rightClick: 'Right click', dragOff: 'Drag: hold the left mouse button',
       dragOn: 'Drag active: release the left mouse button', scroll: 'Scroll', scrollUp: 'Scroll up', scrollDown: 'Scroll down',
       scrollSurface: 'Slide one finger up or down to scroll', phoneInput: 'Phone input', type: 'Type…', draft: 'Text draft',
@@ -56,7 +61,10 @@
       padTrackpad: '手柄触控板：拖动移动鼠标，轻点左键，长按右键',
       padTrackpadLabel: '触控板', padTrackpadHint: '拖动移动 · 轻点左键 · 长按右键',
       leftStick: '左摇杆', rightStick: '右摇杆', dpad: '方向键', faceButtons: '功能键',
-      mouseControls: '鼠标控制', touchpad: '触控板：单指移动，轻点单击，双指滚动', leftClick: '鼠标左键', rightClick: '鼠标右键',
+      mouseControls: '鼠标控制',
+      touchpad: '触控板：单指移动，轻点左键，双指轻点右键，双指滑动滚轮',
+      touchpadHint: '轻点左键 · 双指轻点右键 · 双指滚轮',
+      leftClick: '鼠标左键', rightClick: '鼠标右键',
       dragOff: '拖动，点击按住左键', dragOn: '拖动已开启，点击松开左键', scroll: '滚轮', scrollUp: '向上滚动', scrollDown: '向下滚动',
       scrollSurface: '单指上下滑动滚动页面', phoneInput: '手机输入', type: '输入…', draft: '输入草稿',
       speech: '浏览器语音输入', stopSpeech: '停止语音', sendDraft: '发送草稿到电脑', commonActions: '常用操作',
@@ -113,6 +121,7 @@
   const queue = [];
   const pointers = new Map();
   let gesture = null;
+  let lastSingleTap = null;
   let speech = null;
   let speechListening = false;
   let inputVersion = 0;
@@ -120,7 +129,12 @@
   const savedMode = storage.get('watchmouse_mode');
   let mode = null;
 
+  function syncSpeedLabel() {
+    const badge = $('speedValue');
+    if (badge) badge.textContent = sensitivity.toFixed(1) + '×';
+  }
   $('sensitivity').value = String(sensitivity);
+  syncSpeedLabel();
   $('pairingCode').value = token;
   $('serverAddress').textContent = location.host;
   function refreshWatchLink() {
@@ -182,7 +196,7 @@
     if (motionTimer) { clearTimeout(motionTimer); motionTimer = null; }
     pendingX = pendingY = pendingScroll = pendingRailScroll = 0;
     clearRailGesture();
-    pointers.clear(); gesture = null;
+    pointers.clear(); gesture = null; lastSingleTap = null;
     cancelIndicator();
     $('touchpad').classList.remove('is-touching');
     $('touchIndicator').hidden = true;
@@ -430,14 +444,34 @@
     if (scroll) enqueue({kind: 'scroll', amount: scroll});
     if (railScroll) enqueue({kind: 'scroll', amount: railScroll, source: 'rail'});
   }
-  function scheduleMotion() { if (!draining && !motionTimer) motionTimer = setTimeout(flushMotion, 16); }
+  // 8ms (~120Hz) cadence cuts touch-to-cursor batching delay in half while still
+  // coalescing high-rate 120-240Hz touch bursts into one lightweight packet.
+  function scheduleMotion() { if (!draining && !motionTimer) motionTimer = setTimeout(flushMotion, 8); }
+  function pointerGain(dx, dy, dt) {
+    if (!Number.isFinite(dt) || dt <= 1 || dt >= 80) return 1;
+    const speed = Math.hypot(dx, dy) / dt;
+    return speed <= 0.35 ? 1 : 1 + Math.min(1.15, (speed - 0.35) * 0.65);
+  }
   function send(payload) {
     flushMotion();
     return new Promise((resolve, reject) => enqueue({kind: 'command', payload, resolve, reject}));
   }
   function sendQuietly(payload) { send(payload).catch(() => {}); }
 
-  $('connectionButton').addEventListener('click', () => setConnectionPanel($('connectionPanel').hidden));
+  $('connectionButton').addEventListener('click', () => { pulseHaptic(6); setConnectionPanel($('connectionPanel').hidden); });
+  const workspaceNode = document.querySelector('.workspace');
+  if (workspaceNode) {
+    workspaceNode.addEventListener('pointerdown', () => {
+      if (connected && !$('connectionPanel').hidden) setConnectionPanel(false);
+    });
+  }
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !$('connectionPanel').hidden) {
+      event.preventDefault();
+      setConnectionPanel(false);
+      $('connectionButton').focus();
+    }
+  });
   $('pairButton').addEventListener('click', () => {
     const nextToken = $('pairingCode').value.trim();
     if (nextToken !== token) { statusVersion++; setConnection(false, 'notConnected'); }
@@ -445,9 +479,20 @@
     refreshWatchLink();
     checkConnection(true);
   });
-  $('pairingCode').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); $('pairButton').click(); } });
-  $('sensitivity').addEventListener('input', event => { sensitivity = Number(event.target.value); storage.set('watchmouse_sensitivity', String(sensitivity)); });
+  $('pairingCode').addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      if (event.isComposing || event.keyCode === 229) return;
+      $('pairButton').click();
+    }
+  });
+  $('sensitivity').addEventListener('input', event => {
+    sensitivity = Number(event.target.value);
+    syncSpeedLabel();
+    storage.set('watchmouse_sensitivity', String(sensitivity));
+  });
   document.querySelectorAll('[data-command]').forEach(button => button.addEventListener('click', () => {
+    pulseHaptic(6);
     if (dragActive && (button.dataset.command === 'C' || button.dataset.command === 'RC')) {
       dragActive = false;
       updateDragUI();
@@ -455,6 +500,7 @@
     sendQuietly({command: button.dataset.command});
   }));
   document.querySelectorAll('[data-key]').forEach(button => button.addEventListener('click', () => {
+    pulseHaptic(6);
     sendQuietly({key: button.dataset.key, modifiers: button.dataset.modifiers ? button.dataset.modifiers.split(',') : []});
   }));
   document.querySelectorAll('.draft-actions button, .draft-composer button, .mouse-buttons button, .scroll-rail button').forEach(button => button.addEventListener('pointerdown', event => event.preventDefault()));
@@ -476,6 +522,7 @@
   }
   $('dragButton').addEventListener('click', () => {
     if (!connected) { feedback('notConnected', true); setConnectionPanel(true); return; }
+    pulseHaptic(8);
     dragActive = !dragActive;
     updateDragUI();
     sendQuietly({command: dragActive ? 'MD' : 'MU'});
@@ -501,8 +548,8 @@
     indicatorFrame = requestAnimationFrame(() => {
       indicatorFrame = null;
       if (!indicatorPoint || !padRect || !pointers.size || document.hidden) return;
-      $('touchIndicator').style.left = (indicatorPoint.x - padRect.left) + 'px';
-      $('touchIndicator').style.top = (indicatorPoint.y - padRect.top) + 'px';
+      const x = indicatorPoint.x - padRect.left, y = indicatorPoint.y - padRect.top;
+      $('touchIndicator').style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%)`;
       $('touchIndicator').hidden = false;
     });
   }
@@ -515,31 +562,73 @@
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     event.preventDefault();
     if (!connected) { feedback('notConnected', true); setConnectionPanel(true); return; }
+    if (!$('connectionPanel').hidden) setConnectionPanel(false);
     // 上一次抬手事件如果丢了（旋转屏幕、弹系统手势、页面被遮挡），这里残留的
     // 指针会让后面的单指拖动被当成双指滚动，所以先把超时的旧指针清掉。
     const now = performance.now();
     for (const [id, point] of [...pointers]) if (now - point.at > 1500) pointers.delete(id);
     if (!pointers.size) gesture = null;
     try { pad.setPointerCapture(event.pointerId); } catch (_) {}
-    padRect = pad.getBoundingClientRect();
-    pointers.set(event.pointerId, {x: event.clientX, y: event.clientY, at: now});
-    if (pointers.size === 1) gesture = {started: now, moved: 0, multi: false, center: centroid()};
-    else { gesture.multi = true; gesture.center = centroid(); }
+    if (!padRect) padRect = pad.getBoundingClientRect();
+    pointers.set(event.pointerId, {x: event.clientX, y: event.clientY, at: now, timeStamp: event.timeStamp});
+    if (pointers.size === 1) {
+      const canAutoDrag = Boolean(
+        lastSingleTap && !dragActive &&
+        now - lastSingleTap.at <= 320 &&
+        Number.isFinite(event.clientX) && Number.isFinite(event.clientY) &&
+        Math.hypot(event.clientX - lastSingleTap.x, event.clientY - lastSingleTap.y) <= 28
+      );
+      gesture = {started: now, moved: 0, scrolled: 0, multi: false, maxPointers: 1, canAutoDrag, autoDragging: false, center: centroid()};
+    } else {
+      lastSingleTap = null;
+      if (gesture && gesture.autoDragging) {
+        gesture.autoDragging = false;
+        dragActive = false;
+        updateDragUI();
+        sendQuietly({command: 'MU'});
+      }
+      gesture.multi = true;
+      gesture.canAutoDrag = false;
+      gesture.maxPointers = Math.max(gesture.maxPointers || 2, pointers.size);
+      gesture.center = centroid();
+    }
     pad.classList.add('is-touching');
     showPointer(event);
   });
-  function movePointer(event) {
-    const previous = pointers.get(event.pointerId);
-    if (!previous || !gesture || !Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return;
-    const dx = event.clientX - previous.x, dy = event.clientY - previous.y;
-    pointers.set(event.pointerId, {x: event.clientX, y: event.clientY, at: performance.now()});
+  function applyPointerSample(pointerId, sample) {
+    const previous = pointers.get(pointerId);
+    if (!previous || !gesture || !Number.isFinite(sample.clientX) || !Number.isFinite(sample.clientY)) return;
+    const dx = sample.clientX - previous.x, dy = sample.clientY - previous.y;
+    const dt = sample.timeStamp - previous.timeStamp;
+    pointers.set(pointerId, {x: sample.clientX, y: sample.clientY, at: performance.now(), timeStamp: sample.timeStamp});
     gesture.moved += Math.hypot(dx, dy);
     if (pointers.size >= 2) {
       const center = centroid();
-      pendingScroll -= (center.y - gesture.center.y) / 24;
+      const step = (center.y - gesture.center.y) / 24;
+      pendingScroll -= step;
+      gesture.scrolled += Math.abs(step);
       gesture.center = center;
     } else if (!gesture.multi) {
-      pendingX += dx * sensitivity; pendingY += dy * sensitivity;
+      if (gesture.canAutoDrag && !gesture.autoDragging && !dragActive && gesture.moved >= 6) {
+        gesture.autoDragging = true;
+        lastSingleTap = null;
+        dragActive = true;
+        updateDragUI();
+        pulseHaptic(10);
+        sendQuietly({command: 'MD'});
+      }
+      const gain = pointerGain(dx, dy, dt);
+      pendingX += dx * sensitivity * gain;
+      pendingY += dy * sensitivity * gain;
+    }
+  }
+  function movePointer(event) {
+    if (!pointers.has(event.pointerId) || !gesture) return;
+    const coalesced = typeof event.getCoalescedEvents === 'function' ? event.getCoalescedEvents() : null;
+    if (coalesced && coalesced.length > 0) {
+      for (const sample of coalesced) applyPointerSample(event.pointerId, sample);
+    } else {
+      applyPointerSample(event.pointerId, event);
     }
     scheduleMotion();
     showPointer(event);
@@ -547,11 +636,30 @@
   pad.addEventListener('pointermove', event => { event.preventDefault(); movePointer(event); });
   function finishPointer(event, cancelled) {
     if (!pointers.has(event.pointerId)) return;
-    if (!cancelled) movePointer(event);
+    if (!cancelled) applyPointerSample(event.pointerId, event);
     pointers.delete(event.pointerId);
     if (pointers.size) { if (gesture) gesture.center = centroid(); return; }
     flushMotion();
-    if (!cancelled && gesture && !gesture.multi && gesture.moved < 8 && performance.now() - gesture.started < 450 && !dragActive) sendQuietly({command: 'C'});
+    const now = performance.now();
+    if (gesture && gesture.autoDragging) {
+      dragActive = false;
+      updateDragUI();
+      sendQuietly({command: 'MU'});
+    } else if (!cancelled && gesture && !gesture.multi && gesture.moved < 8 && now - gesture.started < 450 && !dragActive) {
+      lastSingleTap = Number.isFinite(event.clientX) && Number.isFinite(event.clientY)
+        ? {at: now, x: event.clientX, y: event.clientY}
+        : null;
+      pulseHaptic(6);
+      sendQuietly({command: 'C'});
+    } else if (!cancelled && gesture && gesture.maxPointers === 2 && gesture.moved < 18 && gesture.scrolled < 0.6 && now - gesture.started < 400) {
+      lastSingleTap = null;
+      pendingScroll = 0;
+      if (dragActive) { dragActive = false; updateDragUI(); }
+      pulseHaptic(10);
+      sendQuietly({command: 'RC'});
+    } else {
+      lastSingleTap = null;
+    }
     gesture = null;
     pendingScroll = 0;
     pad.classList.remove('is-touching');
@@ -566,6 +674,7 @@
   onGestureReset(() => {
     pointers.clear();
     gesture = null;
+    lastSingleTap = null;
     pendingScroll = 0;
     pad.classList.remove('is-touching');
     cancelIndicator();
@@ -577,6 +686,7 @@
     const previous = railPointer;
     railPointer = null;
     scrollSurface.classList.remove('active');
+    scrollSurface.style.setProperty('--rail-offset', '0px');
     if (previous && scrollSurface.hasPointerCapture(previous.id)) scrollSurface.releasePointerCapture(previous.id);
     if (discard) {
       pendingRailScroll = 0;
@@ -595,7 +705,8 @@
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     if (!connected) { feedback('notConnected', true); setConnectionPanel(true); return; }
     try { scrollSurface.setPointerCapture(event.pointerId); } catch (_) {}
-    railPointer = {id: event.pointerId, y: event.clientY};
+    railPointer = {id: event.pointerId, y: event.clientY, startY: event.clientY};
+    scrollSurface.style.setProperty('--rail-offset', '0px');
     scrollSurface.classList.add('active');
   });
   scrollSurface.addEventListener('pointermove', event => {
@@ -604,6 +715,10 @@
     event.stopPropagation();
     pendingRailScroll -= (event.clientY - railPointer.y) / 20;
     railPointer.y = event.clientY;
+    if (Number.isFinite(event.clientY) && Number.isFinite(railPointer.startY)) {
+      const offset = Math.max(-28, Math.min(28, (event.clientY - railPointer.startY) * 0.45));
+      scrollSurface.style.setProperty('--rail-offset', offset + 'px');
+    }
     scheduleMotion();
   });
   scrollSurface.addEventListener('pointerup', event => {
@@ -627,12 +742,13 @@
     left: {up: 'w', down: 's', left: 'a', right: 'd'},
     right: {up: 'up', down: 'down', left: 'left', right: 'right'}
   };
-// Pad buttons are tracked by pad id ('a', 'lb', 'lt', ...). Keyboard mode
+  // Pad buttons are tracked by pad id ('a', 'lb', 'lt', ...). Keyboard mode
   // maps them through PAD_KEYS; native mode sends them to the virtual pad.
   const heldPadKeys = new Map();
   const heldStickKeys = new Map();
   const activeKeys = new Set();
   const stickPointers = new Map();
+  const dpadPointers = new Map();
   const stickHeld = {left: new Set(), right: new Set()};
   const stickAxes = {left: {x: 0, y: 0}, right: {x: 0, y: 0}};
   // A thumb resting on the ring drifts a little; ignore that much travel.
@@ -653,8 +769,8 @@
     for (const key of heldStickKeys.keys()) wanted.add(key);
     return wanted;
   }
-  function syncPadKeys() {
-    if (padNative) { schedulePadSend(); return; }
+  function syncPadKeys(immediate = false) {
+    if (padNative) { schedulePadSend(immediate); return; }
     const wanted = wantedPadKeys();
     for (const key of Array.from(activeKeys)) {
       if (!wanted.has(key)) { activeKeys.delete(key); sendQuietly({key, state: 'up'}); }
@@ -666,12 +782,12 @@
   function holdPadKey(id) {
     const count = heldPadKeys.get(id) || 0;
     heldPadKeys.set(id, count + 1);
-    if (!count) syncPadKeys();
+    if (!count) syncPadKeys(true);
   }
   function releasePadKey(id) {
     const count = heldPadKeys.get(id) || 0;
     if (count <= 1) {
-      if (count === 1) { heldPadKeys.delete(id); syncPadKeys(); }
+      if (count === 1) { heldPadKeys.delete(id); syncPadKeys(true); }
       return;
     }
     heldPadKeys.set(id, count - 1);
@@ -681,7 +797,7 @@
     for (const side of ['left', 'right']) {
       for (const key of stickHeld[side]) heldStickKeys.set(key, (heldStickKeys.get(key) || 0) + 1);
     }
-    syncPadKeys();
+    syncPadKeys(false);
   }
   function syncStickKeys(side, nextKeys) {
     stickHeld[side] = nextKeys;
@@ -690,7 +806,7 @@
   function setStickInput(side, nx, ny) {
     if (stickAxes[side].x === nx && stickAxes[side].y === ny) return;
     stickAxes[side] = {x: nx, y: ny};
-    if (padNative) { schedulePadSend(); return; }
+    if (padNative) { schedulePadSend(false); return; }
     syncStickKeys(side, keysFromStick(side, nx, ny));
   }
   function roundAxis(value) { return Math.round(value * 100) / 100; }
@@ -796,7 +912,8 @@
       sendPadState(activation);
       return;
     }
-    if (!activation.sendTimer) activation.sendTimer = setTimeout(() => { activation.sendTimer = null; sendPadState(activation); }, 33);
+    // 12ms (~83Hz) analog stick sampling feels responsive like a 2.4GHz pad.
+    if (!activation.sendTimer) activation.sendTimer = setTimeout(() => { activation.sendTimer = null; sendPadState(activation); }, 12);
   }
   async function sendPadState(activation) {
     if (!activation || !activation.session || !currentPadActivation(activation) || activation.inFlight || activation.sendTimer) return;
@@ -826,7 +943,7 @@
       // Coalesce whatever arrived while the previous snapshot was in flight.
       if (activation.dirty) {
         if (activation.sendTimer) clearTimeout(activation.sendTimer);
-        activation.sendTimer = setTimeout(() => { activation.sendTimer = null; sendPadState(activation); }, 16);
+        activation.sendTimer = setTimeout(() => { activation.sendTimer = null; sendPadState(activation); }, 8);
         return;
       }
       // A virtual pad holds its last state, so refresh a held input once a
@@ -858,11 +975,11 @@
   const padTrackKnob = padTrackpad.querySelector('.pad-trackpad-knob');
   let padTrackPointer = null;
   function movePadTrackKnob(event) {
-    if (!padTrackKnob) return;
-    const rect = padTrackpad.getBoundingClientRect();
+    const rect = padTrackPointer && padTrackPointer.rect;
+    if (!padTrackKnob || !rect || !(rect.width > 0) || !(rect.height > 0)) return;
     const x = Math.max(-1, Math.min(1, (event.clientX - (rect.left + rect.width / 2)) / (rect.width / 2)));
     const y = Math.max(-1, Math.min(1, (event.clientY - (rect.top + rect.height / 2)) / (rect.height / 2)));
-    padTrackKnob.style.transform = `translate(${x * rect.width * 0.3}px, ${y * rect.height * 0.3}px)`;
+    padTrackKnob.style.transform = `translate3d(${x * rect.width * 0.3}px, ${y * rect.height * 0.3}px, 0)`;
   }
   function resetPadTrackpad() {
     padTrackPointer = null;
@@ -880,7 +997,11 @@
     }
     if (!connected) { feedback('notConnected', true); setConnectionPanel(true); return; }
     try { padTrackpad.setPointerCapture(event.pointerId); } catch (_) {}
-    padTrackPointer = {id: event.pointerId, x: event.clientX, y: event.clientY, moved: 0, started: performance.now()};
+    padTrackPointer = {
+      id: event.pointerId, x: event.clientX, y: event.clientY,
+      timeStamp: event.timeStamp, moved: 0, started: performance.now(),
+      rect: padTrackpad.getBoundingClientRect()
+    };
     padTrackpad.classList.add('active');
     movePadTrackKnob(event);
   });
@@ -888,11 +1009,13 @@
     if (!padTrackPointer || padTrackPointer.id !== event.pointerId) return;
     event.preventDefault();
     const dx = event.clientX - padTrackPointer.x, dy = event.clientY - padTrackPointer.y;
+    const gain = pointerGain(dx, dy, event.timeStamp - padTrackPointer.timeStamp);
     padTrackPointer.x = event.clientX;
     padTrackPointer.y = event.clientY;
+    padTrackPointer.timeStamp = event.timeStamp;
     padTrackPointer.moved += Math.hypot(dx, dy);
-    pendingX += dx * sensitivity;
-    pendingY += dy * sensitivity;
+    pendingX += dx * sensitivity * gain;
+    pendingY += dy * sensitivity * gain;
     scheduleMotion();
     movePadTrackKnob(event);
   });
@@ -905,6 +1028,7 @@
     if (gesture.moved < 8) {
       // send() flushes the pending motion first, so the click lands where the
       // cursor actually is rather than where it started.
+      pulseHaptic(6);
       sendQuietly({command: performance.now() - gesture.started >= 450 ? 'RC' : 'C'});
     } else {
       flushMotion();
@@ -954,10 +1078,14 @@
   }
   function resetStickVisual(stick) {
     const knob = stick.querySelector('.stick-knob');
-    if (knob) knob.style.transform = 'translate(-50%, -50%)';
+    if (knob) knob.style.transform = 'translate3d(-50%, -50%, 0)';
     stick.classList.remove('active');
   }
   function clearGamepadUi() {
+    for (const [pointerId, state] of dpadPointers) {
+      try { if (state.captureNode.hasPointerCapture(pointerId)) state.captureNode.releasePointerCapture(pointerId); } catch (_) {}
+    }
+    dpadPointers.clear();
     document.querySelectorAll('#gamepadPanel .is-pressed').forEach(button => {
       button.classList.remove('is-pressed');
       button.padPointer = undefined;
@@ -994,25 +1122,117 @@
   setGamepadLayout(gamepadLayout);
   document.querySelectorAll('[data-layout]').forEach(button => {
     if (!button.closest('.layout-switcher')) return;
-    button.addEventListener('click', () => setGamepadLayout(button.dataset.layout));
+    button.addEventListener('click', () => { pulseHaptic(6); setGamepadLayout(button.dataset.layout); });
   });
+
+  // 8-way D-pad thumb-roll & diagonal support: sliding a thumb across the D-pad
+  // smoothly transitions between cardinal and diagonal directions with a single
+  // cached bounding-rect read per gesture.
+  const dpadElement = document.querySelector('#gamepadPanel .dpad');
+  const dpadButtons = {};
+  document.querySelectorAll('#gamepadPanel .dpad [data-pad]').forEach(button => {
+    dpadButtons[button.dataset.pad] = button;
+  });
+  function syncDpadHighlight(id) {
+    const node = dpadButtons[id];
+    if (!node) return;
+    let active = node.padPointer !== undefined;
+    if (!active) {
+      for (const state of dpadPointers.values()) if (state.held.has(id)) { active = true; break; }
+    }
+    node.classList.toggle('is-pressed', active);
+  }
+  function dpadDirectionsFromPoint(rect, clientX, clientY) {
+    const rx = rect.width / 2, ry = rect.height / 2;
+    const nx = (clientX - (rect.left + rx)) / rx;
+    const ny = (clientY - (rect.top + ry)) / ry;
+    if (Math.hypot(nx, ny) < 0.18) return [];
+    const next = [];
+    if (ny <= -0.3) next.push('dup');
+    else if (ny >= 0.3) next.push('ddown');
+    if (nx <= -0.3) next.push('dleft');
+    else if (nx >= 0.3) next.push('dright');
+    return next;
+  }
+  function applyDpadDirections(state, nextIds) {
+    const wanted = new Set(nextIds);
+    for (const id of [...state.held]) {
+      if (!wanted.has(id)) {
+        state.held.delete(id);
+        releasePadKey(id);
+        syncDpadHighlight(id);
+      }
+    }
+    for (const id of wanted) {
+      if (!state.held.has(id)) {
+        state.held.add(id);
+        holdPadKey(id);
+        syncDpadHighlight(id);
+        pulseHaptic(5);
+      }
+    }
+  }
+  function startDpadSlide(captureNode, event, fallbackId = '') {
+    if (!dpadElement || !Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return false;
+    const rect = dpadElement.getBoundingClientRect();
+    if (!rect || !(rect.width > 0) || !(rect.height > 0)) return false;
+    if (dpadPointers.has(event.pointerId)) endDpadSlide(event);
+    const state = {captureNode, rect, held: new Set()};
+    dpadPointers.set(event.pointerId, state);
+    try { captureNode.setPointerCapture(event.pointerId); } catch (_) {}
+    const dirs = dpadDirectionsFromPoint(rect, event.clientX, event.clientY);
+    applyDpadDirections(state, dirs.length ? dirs : (fallbackId ? [fallbackId] : []));
+    return true;
+  }
+  function moveDpadSlide(event) {
+    const state = dpadPointers.get(event.pointerId);
+    if (!state || !Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return;
+    event.preventDefault();
+    applyDpadDirections(state, dpadDirectionsFromPoint(state.rect, event.clientX, event.clientY));
+  }
+  function endDpadSlide(event) {
+    const state = dpadPointers.get(event.pointerId);
+    if (!state) return false;
+    dpadPointers.delete(event.pointerId);
+    applyDpadDirections(state, []);
+    try { if (state.captureNode.hasPointerCapture(event.pointerId)) state.captureNode.releasePointerCapture(event.pointerId); } catch (_) {}
+    return true;
+  }
+  if (dpadElement) {
+    dpadElement.addEventListener('pointerdown', event => {
+      if (event.target !== dpadElement || (event.button !== undefined && event.button !== 0)) return;
+      event.preventDefault();
+      if (!canUseGamepad()) return;
+      startDpadSlide(dpadElement, event);
+    });
+    dpadElement.addEventListener('pointermove', moveDpadSlide);
+    dpadElement.addEventListener('pointerup', endDpadSlide);
+    dpadElement.addEventListener('pointercancel', endDpadSlide);
+    dpadElement.addEventListener('lostpointercapture', endDpadSlide);
+    dpadElement.addEventListener('contextmenu', event => event.preventDefault());
+  }
+
   document.querySelectorAll('#gamepadPanel [data-pad]').forEach(button => {
+    const inDpad = Boolean(button.closest('.dpad'));
     const bind = event => {
       if (event.button !== undefined && event.button !== 0) return;
       event.preventDefault();
       if (!canUseGamepad()) return;
       const id = button.dataset.pad;
       if (!id) return;
+      if (inDpad && startDpadSlide(button, event, id)) return;
       // 记下是哪个指针按着这个键：同一根手指重复按下说明上次的抬手丢了，
       // 先把它松开再重新按住，不会出现“按键一直按着”的假状态。
       if (button.padPointer === event.pointerId) return;
       if (button.padPointer !== undefined) { releasePadKey(id); button.classList.remove('is-pressed'); }
       button.padPointer = event.pointerId;
       button.classList.add('is-pressed');
+      pulseHaptic(6);
       try { button.setPointerCapture(event.pointerId); } catch (_) {}
       holdPadKey(id);
     };
     const unbind = event => {
+      if (inDpad && endDpadSlide(event)) return;
       if (button.padPointer !== event.pointerId) return;
       button.padPointer = undefined;
       button.classList.remove('is-pressed');
@@ -1021,6 +1241,7 @@
       try { if (button.hasPointerCapture(event.pointerId)) button.releasePointerCapture(event.pointerId); } catch (_) {}
     };
     button.addEventListener('pointerdown', bind);
+    if (inDpad) button.addEventListener('pointermove', moveDpadSlide);
     button.addEventListener('pointerup', unbind);
     button.addEventListener('pointercancel', unbind);
     button.addEventListener('lostpointercapture', unbind);
@@ -1036,23 +1257,28 @@
       // 一根摇杆只跟一根手指。残留的旧指针说明上一次抬手事件丢了，
       // 直接作废，否则摇杆会停在“手指还按着”的那一档。
       for (const [id, point] of [...stickPointers]) if (point.stick === stick && id !== event.pointerId) stickPointers.delete(id);
-      stickPointers.set(event.pointerId, {stick, side});
+      // Cache geometry once at gesture start to avoid per-move layout thrashing.
+      stickPointers.set(event.pointerId, {stick, side, rect: stick.getBoundingClientRect()});
       try { stick.setPointerCapture(event.pointerId); } catch (_) {}
       stick.classList.add('active');
+      pulseHaptic(5);
       moveStick(event);
     });
     function moveStick(event) {
-      if (!stickPointers.has(event.pointerId)) return;
-      const rect = stick.getBoundingClientRect();
+      const state = stickPointers.get(event.pointerId);
+      if (!state) return;
+      const rect = state.rect;
+      if (!rect || !(rect.width > 0) || !(rect.height > 0)) return;
       // Travel is measured from the ring centre: the knob can reach the rim
       // without the finger leaving the circle.
       const radius = Math.min(rect.width, rect.height) / 2;
-      let nx = (event.clientX - (rect.left + radius)) / radius;
-      let ny = (event.clientY - (rect.top + radius)) / radius;
+      const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+      let nx = (event.clientX - cx) / radius;
+      let ny = (event.clientY - cy) / radius;
       const magnitude = Math.hypot(nx, ny);
       if (magnitude > 1) { nx /= magnitude; ny /= magnitude; }
       if (magnitude < STICK_DEADZONE) { nx = 0; ny = 0; }
-      if (knob) knob.style.transform = 'translate(calc(-50% + ' + (nx * 34) + '%), calc(-50% + ' + (ny * 34) + '%))';
+      if (knob) knob.style.transform = 'translate3d(calc(-50% + ' + (nx * 34) + '%), calc(-50% + ' + (ny * 34) + '%), 0)';
       setStickInput(side, nx, ny);
     }
     function endStick(event) {
@@ -1078,6 +1304,11 @@
     touched.forEach(resetStickVisual);
     setStickInput('left', 0, 0);
     setStickInput('right', 0, 0);
+    for (const [pointerId, state] of [...dpadPointers]) {
+      dpadPointers.delete(pointerId);
+      applyDpadDirections(state, []);
+      try { if (state.captureNode.hasPointerCapture(pointerId)) state.captureNode.releasePointerCapture(pointerId); } catch (_) {}
+    }
     document.querySelectorAll('#gamepadPanel [data-pad]').forEach(button => {
       if (button.padPointer === undefined) return;
       button.padPointer = undefined;
@@ -1129,7 +1360,7 @@
     }
   }
   if ($('padFullscreenButton')) {
-    $('padFullscreenButton').addEventListener('click', () => setPadImmersive(!immersiveActive()));
+    $('padFullscreenButton').addEventListener('click', () => { pulseHaptic(6); setPadImmersive(!immersiveActive()); });
   }
   document.querySelectorAll('.pad-rotate-hint').forEach(node => {
     node.addEventListener('click', () => setPadImmersive(true));
@@ -1165,10 +1396,17 @@
       $('textInput').focus({preventScroll: true});
     }
   }
-  document.querySelectorAll('[data-mode]').forEach(button => button.addEventListener('click', () => setMode(button.dataset.mode, true)));
+  document.querySelectorAll('[data-mode]').forEach(button => button.addEventListener('click', () => { pulseHaptic(6); setMode(button.dataset.mode, true); }));
   $('openPhoneKeyboard').addEventListener('click', () => $('textInput').focus());
   $('textInput').addEventListener('compositionstart', () => { composing = true; });
   $('textInput').addEventListener('compositionend', () => { composing = false; textFeedback(); });
+  $('textInput').addEventListener('keydown', event => {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      if (composing || event.isComposing || event.keyCode === 229) return;
+      $('sendTextButton').click();
+    }
+  });
   function updateDeleteLabel() {
     const hasDraft = $('textInput').value.length > 0;
     $('deleteTextButton').setAttribute('aria-label', t(hasDraft ? 'deleteDraft' : 'deleteComputer'));
@@ -1188,6 +1426,7 @@
     return segments.find(item => item.index < caret && item.index + item.length >= caret);
   }
   $('deleteTextButton').addEventListener('click', () => {
+    pulseHaptic(5);
     const input = $('textInput');
     input.focus({preventScroll: true});
     if (composing || speechListening) {
@@ -1216,6 +1455,7 @@
     if (composing) { textFeedback('finishComposition', true); return; }
     if (speechListening) { textFeedback('stopSpeechFirst', true); return; }
     if (!text) { input.focus(); textFeedback(); return; }
+    pulseHaptic(8);
     const sentVersion = inputVersion;
     $('sendTextButton').disabled = true;
     textFeedback();
@@ -1278,7 +1518,7 @@
     for (let index = queue.length - 1; index >= 0; index--) {
       if (queue[index].kind === 'move' || queue[index].kind === 'scroll') queue.splice(index, 1);
     }
-    pointers.clear(); gesture = null;
+    pointers.clear(); gesture = null; lastSingleTap = null;
     cancelIndicator();
     pad.classList.remove('is-touching');
     $('touchIndicator').hidden = true;

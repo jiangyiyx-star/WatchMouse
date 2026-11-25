@@ -36,10 +36,11 @@ class MacTests(unittest.TestCase):
         self.assertEqual([Q.kCGEventKeyDown,Q.kCGEventKeyUp],[Q.CGEventGetType(e) for e in self.events])
         self.assertEqual(Q.kCGEventFlagMaskCommand|Q.kCGEventFlagMaskShift,Q.CGEventGetFlags(self.events[0]))
     def test_drag_motion_release_and_watchdog(self):
-        for command in ('MD','M 20,-10','MU','RC'):
+        for command in ('MD','M 20,-10','MU','RC','MC'):
             self.controller.execute({'command':command})
         self.assertEqual([Q.kCGEventLeftMouseDown,Q.kCGEventLeftMouseDragged,Q.kCGEventLeftMouseUp,
-                          Q.kCGEventRightMouseDown,Q.kCGEventRightMouseUp],[Q.CGEventGetType(e) for e in self.events])
+                          Q.kCGEventRightMouseDown,Q.kCGEventRightMouseUp,
+                          Q.kCGEventOtherMouseDown,Q.kCGEventOtherMouseUp],[Q.CGEventGetType(e) for e in self.events])
         self.controller.execute({'command':'MD'})
         self.controller.drag_timer.cancel()
         self.controller.last_activity=time.monotonic()-6

@@ -191,6 +191,15 @@ class InputSafetyTests(unittest.TestCase):
         self.controller.execute({"command": "MU"})
         self.assertEqual([0x0002, 0x0004], [event[-1] for event in self.events()])
 
+    def test_middle_click_emits_middle_flags_and_releases_active_drag(self):
+        self.controller.execute({"command": "MC"})
+        self.assertEqual([0x0020, 0x0040], [event[-1] for event in self.events()])
+        self.calls.clear()
+        self.controller.execute({"command": "MD"})
+        self.controller.execute({"command": "MC"})
+        self.assertFalse(self.controller.dragging)
+        self.assertEqual([0x0002, 0x0004, 0x0020, 0x0040], [event[-1] for event in self.events()])
+
     def test_gamepad_key_holds_down_until_the_phone_releases_it(self):
         self.controller.execute({"key": "space", "state": "down"})
         self.assertEqual([press("space")], self.events())

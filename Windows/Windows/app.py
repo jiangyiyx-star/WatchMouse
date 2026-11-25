@@ -97,8 +97,13 @@ ENGLISH = {
     '请复制连接链接': 'Copy the connection link',
     '正在查找局域网地址…': 'Finding local network addresses…',
     '✓ 已复制连接链接': '✓ Link copied',
+    '复制配对码': 'Copy pairing key',
+    '✓ 已复制配对码': '✓ Key copied',
+    '配对密钥已复制。': 'Pairing key copied.',
     '原生手柄 ({active}/{max}) · 已响应 {count} 次': 'Native pad ({active}/{max}) · {count} actions',
+    '原生手柄 ({active}/{max}) · 已响应 {count} 次 · {client}': 'Native pad ({active}/{max}) · {count} actions · {client}',
     '键盘手柄映射 · 已响应 {count} 次': 'Keyboard pad · {count} actions',
+    '键盘手柄映射 · 已响应 {count} 次 · {client}': 'Keyboard pad · {count} actions · {client}',
     "演示": "Demo",
     "演示模式：示例地址与二维码，不会连接或控制电脑。": "Demo: sample address and QR code. No connection or computer control.",
 }
@@ -351,6 +356,8 @@ class WatchMouseApp:
         self._last_health_data = None
         self._copy_feedback_active = False
         self._copy_feedback_token = 0
+        self._copy_key_feedback_active = False
+        self._copy_key_feedback_token = 0
         self.status_state = "starting"
         self.update_title()
         icon_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "app.ico"
@@ -422,6 +429,8 @@ class WatchMouseApp:
             widget.configure(text=self.tr(source))
         if self._copy_feedback_active:
             self.copy_button.configure(text=self.tr("✓ 已复制连接链接"))
+        if self._copy_key_feedback_active:
+            self.copy_key_button.configure(text=self.tr("✓ 已复制配对码"))
         for variable in self.localized_variables:
             variable.refresh()
         if not self.demo:
@@ -451,7 +460,11 @@ class WatchMouseApp:
         native = False
         active = 0
         max_pads = 4
+        client = ""
         if self.server is not None:
+            raw_client = getattr(self.server, "last_client", "")
+            if isinstance(raw_client, str):
+                client = raw_client.strip()
             raw_count = getattr(self.server, "command_count", None)
             if isinstance(raw_count, int) and not isinstance(raw_count, bool):
                 count = raw_count
@@ -478,6 +491,8 @@ class WatchMouseApp:
                     native = bool(snapshot.get("nativeGamepad"))
                     active = snapshot["activeGamepads"] if isinstance(snapshot.get("activeGamepads"), int) else 0
                     max_pads = snapshot["maxGamepads"] if isinstance(snapshot.get("maxGamepads"), int) else 4
+                    if not client and isinstance(snapshot.get("lastClient"), str):
+                        client = snapshot["lastClient"].strip()
         else:
             data = snapshot if isinstance(snapshot, dict) else self._last_health_data
             if isinstance(data, dict):
@@ -487,14 +502,20 @@ class WatchMouseApp:
                     native = bool(data.get("nativeGamepad"))
                     active = data["activeGamepads"] if isinstance(data.get("activeGamepads"), int) else 0
                     max_pads = data["maxGamepads"] if isinstance(data.get("maxGamepads"), int) else 4
+                    if isinstance(data.get("lastClient"), str):
+                        client = data["lastClient"].strip()
         if count is None:
             if self.telemetry_var.source != "":
                 self.telemetry_var.set("")
             return
         if native:
-            text = LocalizedText("原生手柄 ({active}/{max}) · 已响应 {count} 次", {"active": active, "max": max_pads, "count": count})
+            template = "原生手柄 ({active}/{max}) · 已响应 {count} 次 · {client}" if client else "原生手柄 ({active}/{max}) · 已响应 {count} 次"
+            params = {"active": active, "max": max_pads, "count": count, **({"client": client} if client else {})}
+            text = LocalizedText(template, params)
         else:
-            text = LocalizedText("键盘手柄映射 · 已响应 {count} 次", {"count": count})
+            template = "键盘手柄映射 · 已响应 {count} 次 · {client}" if client else "键盘手柄映射 · 已响应 {count} 次"
+            params = {"count": count, **({"client": client} if client else {})}
+            text = LocalizedText(template, params)
         if self.telemetry_var.source != text:
             self.telemetry_var.set(text)
 
@@ -651,8 +672,10 @@ class WatchMouseApp:
         qr_plate.pack()
         self.qr_text = LocalizedStringVar(self, value="二维码加载中")
         self.qr_label = tk.Label(qr_plate, textvariable=self.qr_text, width=27, height=12, bg="white", fg=BG,
-                                 font=("Microsoft YaHei UI", 10), bd=0)
+                                 font=("Microsoft YaHei UI", 10), bd=0, cursor="" if self.demo else "hand2")
         self.qr_label.pack()
+        if not self.demo:
+            self.qr_label.bind("<Button-1>", lambda _event: self.copy_link())
         self.localized_widget(ttk.Label, qr_column, text="用手机相机扫一扫", style="Muted.TLabel").pack(pady=(px(12), 0))
 
         right = ttk.Frame(connection, style="Card.TFrame")
@@ -676,8 +699,15 @@ class WatchMouseApp:
         self.link_entry.pack(fill="x", ipady=px(8), pady=(px(10), px(18)))
         self.copy_button = self.localized_widget(ttk.Button, right, text="复制连接链接", command=self.copy_link, style="Accent.TButton")
         self.copy_button.pack(fill="x")
-        self.preview_button = self.localized_widget(ttk.Button, right, text="在电脑打开", command=self.open_browser, style="CardQuiet.TButton")
-        self.preview_button.pack(fill="x", pady=(px(8), 0))
+        secondary_actions = ttk.Frame(right, style="Card.TFrame")
+        secondary_actions.pack(fill="x", pady=(px(8), 0))
+        secondary_actions.columnconfigure(0, weight=1)
+        secondary_actions.columnconfigure(1, weight=1)
+        self.copy_key_button = self.localized_widget(ttk.Button, secondary_actions, text="复制配对码", command=self.copy_key, style="CardQuiet.TButton")
+        self.copy_key_button.grid(row=0, column=0, sticky="ew", padx=(0, px(4)))
+        self.preview_button = self.localized_widget(ttk.Button, secondary_actions, text="在电脑打开", command=self.open_browser, style="CardQuiet.TButton")
+        self.preview_button.grid(row=0, column=1, sticky="ew", padx=(px(4), 0))
+        self.root.bind("<Control-c>", self._shortcut_copy_link, add="+")
 
         service_border = tk.Frame(outer, bg=BORDER, bd=0)
         service_border.pack(fill="x", pady=(px(16), 0))
@@ -817,6 +847,38 @@ class WatchMouseApp:
 
         self.root.after(1600, reset_feedback)
 
+    def _shortcut_copy_link(self, event=None):
+        if self.demo:
+            return None
+        widget = getattr(event, "widget", None)
+        if widget is self.link_entry:
+            try:
+                if self.link_entry.selection_present():
+                    return None
+            except Exception:
+                return None
+        self.copy_link()
+        return "break"
+
+    def copy_key(self):
+        if self.demo or not self.token:
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(self.token)
+        self.notice.set("配对密钥已复制。")
+        self._copy_key_feedback_active = True
+        self._copy_key_feedback_token += 1
+        token = self._copy_key_feedback_token
+        self.copy_key_button.configure(text=self.tr("✓ 已复制配对码"))
+
+        def reset_key_feedback():
+            if self.closing or self._copy_key_feedback_token != token:
+                return
+            self._copy_key_feedback_active = False
+            self.copy_key_button.configure(text=self.tr("复制配对码"))
+
+        self.root.after(1600, reset_key_feedback)
+
     def open_browser(self):
         if self.demo:
             return
@@ -827,11 +889,12 @@ class WatchMouseApp:
         running = self.server is not None or self.borrowed
         if self.demo:
             for button in (self.start_button, self.stop_button, self.restart_button,
-                           self.refresh_button, self.copy_button, self.preview_button):
+                           self.refresh_button, self.copy_button, self.copy_key_button, self.preview_button):
                 button["state"] = "disabled"
             return
         self.refresh_button["state"] = "disabled" if self.addresses_pending else "normal"
         self.copy_button["state"] = "normal" if self.link_var.get() else "disabled"
+        self.copy_key_button["state"] = "normal" if self.token else "disabled"
         self.start_button["state"] = "disabled" if self.busy or running else "normal"
         self.stop_button["state"] = "normal" if running and not self.borrowed and not self.busy else "disabled"
         self.restart_button["state"] = "normal" if running and not self.borrowed and not self.busy else "disabled"

@@ -32,13 +32,33 @@
     <symbol id="i-expand" viewBox="0 0 24 24"><path d="M9 4H4v5m11-5h5v5M9 20H4v-5m11 5h5v-5"/></symbol>
     <symbol id="i-compress" viewBox="0 0 24 24"><path d="M4 9h5V4m11 5h-5V4M4 15h5v5m11-5h-5v5"/></symbol>
     <symbol id="i-gamepad" viewBox="0 0 24 24"><path d="M6.5 8h11a4.5 4.5 0 0 1 4.3 5.8l-1.2 4A3.5 3.5 0 0 1 17 20h-2.2a2 2 0 0 1-1.7-1l-.6-1a2 2 0 0 0-1.7-1h-.6a2 2 0 0 0-1.7 1l-.6 1a2 2 0 0 1-1.7 1H7a3.5 3.5 0 0 1-3.6-2.2l-1.2-4A4.5 4.5 0 0 1 6.5 8Z"/><path d="M8 12v4m-2-2h4"/><circle cx="15.2" cy="12.2" r=".9" fill="currentColor" stroke="none"/><circle cx="17.8" cy="14.2" r=".9" fill="currentColor" stroke="none"/><circle cx="15.2" cy="16.2" r=".9" fill="currentColor" stroke="none"/><circle cx="12.6" cy="14.2" r=".9" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-rewind" viewBox="0 0 24 24"><path d="m11 17-5-5 5-5m7 10-5-5 5-5"/></symbol>
+    <symbol id="i-forward" viewBox="0 0 24 24"><path d="m6 17 5-5-5-5m7 10 5-5-5-5"/></symbol>
+    <symbol id="i-mute" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4V5Zm11 4-6 6m0-6 6 6"/></symbol>
+    <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+    <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
   </defs></svg>
   <div class="app-shell">
     <main class="workspace">
       <section id="douyinPanel" class="douyin-panel" hidden aria-label="抖音遥控" data-i18n-aria="videoControls">
-        <button type="button" data-key="up" class="douyin-previous" aria-label="上一个视频" data-i18n-aria="previousVideo"><svg class="icon " viewBox="0 0 24 24" aria-hidden="true"><use href="#i-up"/></svg></button>
-        <button type="button" data-key="space" class="douyin-play" aria-label="播放或暂停" data-i18n-aria="playPause"><span class="play-disc"><svg class="icon " viewBox="0 0 32 24" aria-hidden="true"><use href="#i-play-pause"/></svg></span></button>
-        <button type="button" data-key="down" class="douyin-next" aria-label="下一个视频" data-i18n-aria="nextVideo"><svg class="icon " viewBox="0 0 24 24" aria-hidden="true"><use href="#i-down"/></svg></button>
+        <div class="douyin-stage">
+          <button type="button" data-key="up" class="douyin-previous" aria-label="上一个视频" data-i18n-aria="previousVideo"><svg class="icon " viewBox="0 0 24 24" aria-hidden="true"><use href="#i-up"/></svg></button>
+          <button type="button" data-key="space" class="douyin-play" aria-label="播放或暂停" data-i18n-aria="playPause"><span class="play-disc"><svg class="icon " viewBox="0 0 32 24" aria-hidden="true"><use href="#i-play-pause"/></svg></span></button>
+          <button type="button" data-key="down" class="douyin-next" aria-label="下一个视频" data-i18n-aria="nextVideo"><svg class="icon " viewBox="0 0 24 24" aria-hidden="true"><use href="#i-down"/></svg></button>
+        </div>
+        <div id="mediaToolbar" class="media-toolbar" role="toolbar" focusgroup="toolbar wrap" aria-label="播放快捷控制" data-i18n-aria="mediaToolbar">
+          <div class="toolbar-group" role="group" aria-label="进度跳转" data-i18n-aria="seekGroup">
+            <button type="button" data-key="left" data-repeat="true" aria-label="快退 -5s" data-i18n-aria="rewind5s" title="-5s"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-rewind"/></svg><span>-5s</span></button>
+            <button type="button" data-key="right" data-repeat="true" aria-label="快进 +5s" data-i18n-aria="forward5s" title="+5s"><span>+5s</span><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-forward"/></svg></button>
+          </div>
+          <span class="toolbar-sep" role="separator" aria-orientation="vertical"></span>
+          <div class="toolbar-group" role="group" aria-label="画面与声音" data-i18n-aria="viewAudioGroup">
+            <button type="button" data-key="m" aria-label="静音 (M)" data-i18n-aria="muteVideo"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-mute"/></svg><span data-i18n="muteLabel">静音</span></button>
+            <button type="button" data-key="f" aria-label="全屏 (F)" data-i18n-aria="fullscreenVideo"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-expand"/></svg><span data-i18n="fullscreenLabel">全屏</span></button>
+            <button type="button" data-key="escape" aria-label="Esc · 退出全屏" data-i18n-aria="exitFullscreen"><span>Esc</span></button>
+          </div>
+        </div>
       </section>
       <section id="gamepadPanel" class="gamepad-panel" hidden aria-label="手柄控制" data-i18n-aria="gamepadControls" data-layout="xbox">
         <div class="pad-hud">
@@ -92,9 +112,9 @@
         </div>
       </section>
       <section id="mousePanel" class="mouse-controller" aria-label="鼠标控制" data-i18n-aria="mouseControls">
-        <div id="touchpad" class="touchpad" aria-label="触控板：单指移动，轻点左键，双指轻点右键，双指滑动滚轮" data-i18n-aria="touchpad">
+        <div id="touchpad" class="touchpad" aria-label="触控板：单指移动，轻点左键，双指轻点右键，三指轻点中键，双指滑动滚轮" data-i18n-aria="touchpad">
           <svg class="pad-mark" viewBox="0 0 52 52" aria-hidden="true"><path d="M19 9h-5a5 5 0 0 0-5 5v5m24-10h5a5 5 0 0 1 5 5v5M9 33v5a5 5 0 0 0 5 5h5m14 0h5a5 5 0 0 0 5-5v-5"/><circle cx="26" cy="26" r="2"/></svg>
-          <span class="touchpad-hint" data-i18n="touchpadHint">轻点左键 · 双指轻点右键 · 双指滚轮</span>
+          <span class="touchpad-hint" data-i18n="touchpadHint">轻点左键 · 双指右键 · 三指中键 · 双指滚轮</span>
           <span id="touchIndicator" class="touch-indicator" hidden aria-hidden="true"></span>
         </div>
         <div class="mouse-buttons">
@@ -112,11 +132,27 @@
         <div class="draft-composer">
           <textarea id="textInput" rows="2" maxlength="4000" placeholder="输入…" data-i18n-placeholder="type" aria-label="输入草稿" data-i18n-aria="draft" autocapitalize="off" spellcheck="false"></textarea>
           <div class="composer-actions">
+            <button id="clearDraftButton" class="clear-button" type="button" hidden aria-label="清空草稿" data-i18n-aria="clearDraft" title="Clear"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-close"/></svg></button>
             <button id="speechButton" class="speech-button" type="button" hidden aria-label="浏览器语音输入" data-i18n-aria="speech" aria-pressed="false"><svg class="icon mic-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-mic"/></svg><svg class="icon stop-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-stop"/></svg></button>
             <button id="sendTextButton" class="send-button" type="button" aria-label="发送草稿到电脑" data-i18n-aria="sendDraft"><svg class="icon " viewBox="0 0 24 24" aria-hidden="true"><use href="#i-send"/></svg></button>
           </div>
         </div>
         <div id="textFeedback" class="visually-hidden" role="status" aria-live="polite"></div>
+        <div id="shortcutToolbar" class="shortcut-bar" role="toolbar" focusgroup="toolbar wrap" aria-label="快捷按键" data-i18n-aria="shortcutToolbar">
+          <div class="toolbar-group" role="group" aria-label="编辑快捷键" data-i18n-aria="editShortcuts">
+            <button type="button" data-key="escape" aria-label="Esc · 取消或关闭" data-i18n-aria="escShortcut">Esc</button>
+            <button type="button" data-key="tab" aria-label="Tab · 切换焦点" data-i18n-aria="tabShortcut">Tab</button>
+            <button type="button" data-key="z" data-modifiers="ctrl" aria-label="撤销 (Ctrl+Z)" data-i18n-aria="undoShortcut"><span data-i18n="undoKey">撤销</span></button>
+            <button type="button" data-key="a" data-modifiers="ctrl" aria-label="全选 (Ctrl+A)" data-i18n-aria="selectAllShortcut"><span data-i18n="selectAllKey">全选</span></button>
+            <button type="button" data-key="c" data-modifiers="ctrl" aria-label="复制 (Ctrl+C)" data-i18n-aria="copyShortcut"><span data-i18n="copyKey">复制</span></button>
+            <button type="button" data-key="v" data-modifiers="ctrl" aria-label="粘贴 (Ctrl+V)" data-i18n-aria="pasteShortcut"><span data-i18n="pasteKey">粘贴</span></button>
+          </div>
+          <span class="toolbar-sep" role="separator" aria-orientation="vertical"></span>
+          <div class="toolbar-group" role="group" aria-label="光标移动" data-i18n-aria="cursorShortcuts">
+            <button type="button" data-key="left" data-repeat="true" aria-label="左方向键 ←" data-i18n-aria="arrowLeft" title="←"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-arrow-left"/></svg></button>
+            <button type="button" data-key="right" data-repeat="true" aria-label="右方向键 →" data-i18n-aria="arrowRight" title="→"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-arrow-right"/></svg></button>
+          </div>
+        </div>
         <div class="draft-actions" aria-label="常用操作" data-i18n-aria="commonActions">
           <button id="deleteTextButton" type="button" aria-label="电脑退格" data-i18n-aria="backspace"><svg class="icon " viewBox="0 0 24 24" aria-hidden="true"><use href="#i-backspace"/></svg></button>
           <button type="button" data-key="space" aria-label="电脑空格" data-i18n-aria="space"><svg class="icon " viewBox="0 0 24 24" aria-hidden="true"><use href="#i-space"/></svg></button>
@@ -127,10 +163,15 @@
     </main>
     <footer class="bottom-bar">
       <section id="connectionPanel" class="connection-panel" hidden aria-label="连接设置" data-i18n-aria="connectionSettings">
-        <div class="sheet-grip" aria-hidden="true"></div>
-        <div class="connection-meta"><span id="serverAddress"></span><a id="watchLink" href="/watch"><svg class="icon " viewBox="0 0 24 24" aria-hidden="true"><use href="#i-watch"/></svg><span data-i18n="watch">手表</span></a></div>
+        <div id="sheetGrip" class="sheet-grip" aria-hidden="true"></div>
+        <div class="connection-meta"><span class="server-meta"><span id="serverAddress"></span><span id="latencyBadge" class="latency-badge" hidden aria-live="off"></span></span><a id="watchLink" href="/watch"><svg class="icon " viewBox="0 0 24 24" aria-hidden="true"><use href="#i-watch"/></svg><span data-i18n="watch">手表</span></a></div>
         <div class="pairing-row"><input id="pairingCode" type="password" placeholder="配对码" data-i18n-placeholder="pairingCode" aria-label="配对码" data-i18n-aria="pairingCode" autocomplete="off" autocapitalize="off" spellcheck="false"><button id="pairButton" class="accent-button" type="button" data-i18n="connect">连接</button></div>
         <label class="speed-setting"><span data-i18n="speed">速度</span><input id="sensitivity" type="range" min="0.5" max="3" step="0.1" value="1.4" aria-label="鼠标移动速度" data-i18n-aria="mouseSpeed"><span id="speedValue" class="speed-value" aria-hidden="true">1.4×</span></label>
+        <div id="speedPresets" class="speed-presets" role="group" aria-label="速度预设" data-i18n-aria="speedPresets">
+          <button type="button" data-speed="0.8" aria-pressed="false">0.8×</button>
+          <button type="button" data-speed="1.4" aria-pressed="true">1.4×</button>
+          <button type="button" data-speed="2.2" aria-pressed="false">2.2×</button>
+        </div>
         <label class="language-setting"><span data-i18n="language">Language</span><select id="languageSelect" aria-label="Interface language" data-i18n-aria="interfaceLanguage"><option value="en">English</option><option value="zh">中文</option></select></label>
         <p id="inputModeNote" class="connection-note" hidden></p>
         <div id="connectionMessage" class="connection-message" role="status"></div>

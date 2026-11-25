@@ -99,6 +99,11 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
       if (key.startsWith('data-')) this.dataset[key.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = String(value);
     }
     getAttribute(key) {return this.attributes[key] ?? null;}
+    removeAttribute(key) {
+      delete this.attributes[key];
+      if (key === 'class') this.className = '';
+      if (key.startsWith('data-')) delete this.dataset[key.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())];
+    }
     querySelectorAll(selector) {return selectAll(selector, this);}
     querySelector(selector) {return this.querySelectorAll(selector)[0] || null;}
     getBoundingClientRect() {rectReads++; return {left: 0, top: 0};}
@@ -307,7 +312,7 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
       return id;
     },
     cancelAnimationFrame: id => {clearTimeout(frames.get(id)); frames.delete(id);},
-    navigator: {onLine: true, sendBeacon: (url, blob) => {
+    navigator: {onLine: true, ...(options.wakeLock ? {wakeLock: options.wakeLock} : {}), sendBeacon: (url, blob) => {
       beacons.push({url, blob});
       if (url.startsWith('/api/pad')) blob.text().then(text => padHub.handle(url, JSON.parse(text)));
       if (url === '/api/command' && options.simulateDragRace) { dragState.held = false; commandEffects.push('beacon MU'); }
@@ -1212,5 +1217,150 @@ function createApp(savedMode = null, inputStatus = {}, options = {}) {
   await settle(uiPolish);
   assert.equal(uiPolish.records.at(-1).text, 'Hello IME', 'Ctrl+Enter submits draft when not composing');
 
-  console.log('PASS: mouse/keyboard/performance regressions, two-finger RC, double-tap drag, flick acceleration, 8-way D-pad & cached rects, IME-safe shortcuts, single-player keyboard fallback, independent P1/P2 native sessions, neutral heartbeat, sequence-fenced rotation/blur, pending-join cancellation, stale session snapshots, fifth-player full/retry, idempotent lost-ACK join and expired-generation recovery.');
+  // Round 1 UX, kinetic scroll momentum, shortcut/media toolbars, hold-to-repeat & wake lock suite:
+  // A. Kinetic scroll momentum on rail & two-finger touchpad flicks, plus instant touch-to-stop.
+  const momentumApp = createApp(); await wait();
+  momentumApp.elements.scrollSurface.emit('pointerdown', {pointerId: 701, pointerType: 'touch', clientY: 220, timeStamp: 100});
+  momentumApp.elements.scrollSurface.emit('pointermove', {pointerId: 701, clientY: 170, timeStamp: 116});
+  momentumApp.elements.scrollSurface.emit('pointermove', {pointerId: 701, clientY: 110, timeStamp: 132});
+  momentumApp.elements.scrollSurface.emit('pointerup', {pointerId: 701, clientY: 90, timeStamp: 140});
+  const directSteps = momentumApp.records.filter(p => p.command?.startsWith('S ')).reduce((s, p) => s + Number(p.command.slice(2)), 0);
+  await new Promise(resolve => setTimeout(resolve, 180));
+  await settle(momentumApp);
+  const coastedSteps = momentumApp.records.filter(p => p.command?.startsWith('S ')).reduce((s, p) => s + Number(p.command.slice(2)), 0);
+  assert(coastedSteps > Math.max(6, directSteps), 'brisk rail flick coasts beyond direct finger travel');
+
+  // Touching down during coasting stops momentum immediately.
+  const stopCoast = createApp(); await wait();
+  stopCoast.elements.scrollSurface.emit('pointerdown', {pointerId: 702, pointerType: 'touch', clientY: 220, timeStamp: 200});
+  stopCoast.elements.scrollSurface.emit('pointermove', {pointerId: 702, clientY: 160, timeStamp: 216});
+  stopCoast.elements.scrollSurface.emit('pointermove', {pointerId: 702, clientY: 90, timeStamp: 232});
+  stopCoast.elements.scrollSurface.emit('pointerup', {pointerId: 702, clientY: 70, timeStamp: 240});
+  assert(stopCoast.frames.size === 1, 'coasting schedules one animation frame');
+  stopCoast.elements.touchpad.emit('pointerdown', {pointerId: 703, pointerType: 'touch', clientX: 50, clientY: 50, timeStamp: 244});
+  assert.equal(stopCoast.frames.size, 1, 'touchpad indicator frame replaces cancelled momentum frame cleanly');
+  stopCoast.elements.touchpad.emit('pointerup', {pointerId: 703, clientX: 50, clientY: 50, timeStamp: 260});
+  await settle(stopCoast);
+  assert.equal(stopCoast.frames.size, 0, 'no residual momentum frames remain after touch stop');
+
+  // B. Keyboard quick-shortcut toolbar, roving tabindex, clear-draft button & Label-in-Name.
+  const kbTools = createApp('keyboard'); await wait();
+  const shortcutButtons = kbTools.elements.shortcutToolbar.querySelectorAll('button');
+  assert.equal(shortcutButtons.length, 8, 'shortcut toolbar exposes Esc, Tab, Undo, Select All, Copy, Paste, Left, Right');
+  assert.equal(shortcutButtons[0].getAttribute('tabindex'), '0', 'first toolbar item owns the roving tab stop');
+  assert.equal(shortcutButtons[1].getAttribute('tabindex'), '-1', 'remaining toolbar items stay out of sequential Tab order');
+  shortcutButtons[0].emit('keydown', {key: 'ArrowRight'});
+  assert.equal(kbTools.document.activeElement, shortcutButtons[1], 'ArrowRight advances roving toolbar focus');
+  assert.equal(shortcutButtons[1].getAttribute('tabindex'), '0');
+  shortcutButtons[1].emit('keydown', {key: 'End'});
+  assert.equal(kbTools.document.activeElement, shortcutButtons.at(-1), 'End jumps to last toolbar item across groups');
+  const copyBtn = shortcutButtons.find(b => b.dataset.key === 'c' && b.dataset.modifiers === 'ctrl');
+  copyBtn.click();
+  await settle(kbTools);
+  assert.deepEqual(kbTools.records.at(-1), {key: 'c', modifiers: ['ctrl'], token: 'testtoken123456789'}, 'Copy shortcut dispatches Ctrl+C');
+  for (const lang of ['en', 'zh']) {
+    kbTools.elements.languageSelect.value = lang;
+    kbTools.elements.languageSelect.emit('change');
+    for (const btn of [...shortcutButtons, ...kbTools.elements.mediaToolbar.querySelectorAll('button')]) {
+      const visible = btn.textContent.trim();
+      if (visible) assert(btn.getAttribute('aria-label').includes(visible), `WCAG 2.5.3 Label-in-Name (${lang}): "${btn.getAttribute('aria-label')}" includes "${visible}"`);
+    }
+  }
+  assert(kbTools.elements.clearDraftButton.hidden, 'clear draft button stays hidden when draft is empty');
+  kbTools.draft('Long text to clear');
+  assert(!kbTools.elements.clearDraftButton.hidden, 'clear draft button appears when draft has text');
+  kbTools.elements.clearDraftButton.click();
+  assert.equal(kbTools.elements.textInput.value, '');
+  assert(kbTools.elements.clearDraftButton.hidden);
+  assert.equal(kbTools.document.activeElement, kbTools.elements.textInput);
+
+  // C. Press-and-hold auto-repeat on backspace and scroll step buttons, suppressing duplicate release click.
+  const holdApp = createApp('keyboard'); await wait();
+  holdApp.draft('ABCD');
+  holdApp.elements.deleteTextButton.emit('pointerdown', {pointerId: 710, button: 0});
+  assert(holdApp.runTimer(380), 'initial 380ms hold delay arms on pointerdown');
+  await new Promise(resolve => setTimeout(resolve, 145));
+  holdApp.elements.deleteTextButton.emit('pointerup', {pointerId: 710, button: 0});
+  holdApp.elements.deleteTextButton.click();
+  assert(holdApp.elements.textInput.value.length <= 1, 'holding delete repeats grapheme deletion');
+  assert.equal(holdApp.timers.size, 1, 'releasing held button leaves only status timer');
+
+  // D. Media utility bar in video mode & Screen Wake Lock lifecycle.
+  let wakeCount = 0, wakeReleased = 0;
+  const wakeMock = {
+    request: async () => {
+      wakeCount++;
+      return {
+        addEventListener() {},
+        release: async () => { wakeReleased++; }
+      };
+    }
+  };
+  const mediaApp = createApp('douyin', {}, {wakeLock: wakeMock}); await wait();
+  assert.equal(wakeCount, 1, 'connected visible remote acquires Screen Wake Lock');
+  const fullscreenMediaBtn = mediaApp.elements.mediaToolbar.querySelectorAll('button').find(b => b.dataset.key === 'f');
+  fullscreenMediaBtn.click();
+  await settle(mediaApp);
+  assert.equal(mediaApp.records.at(-1).key, 'f', 'media toolbar Fullscreen button dispatches F');
+  mediaApp.document.hidden = true; mediaApp.document.emit('visibilitychange'); await wait();
+  assert.equal(wakeReleased, 1, 'hiding page releases Screen Wake Lock');
+  mediaApp.document.hidden = false; mediaApp.document.emit('visibilitychange'); await wait();
+  assert.equal(wakeCount, 2, 'returning to foreground re-acquires Screen Wake Lock');
+
+  // Round 2 UX, 3-finger middle-click, live RTT latency badge, sheet grip swipe-down & speed presets suite:
+  // A. Three-finger tap dispatches MC, clears active drag, and never leaks spurious scroll steps.
+  const r2App = createApp(); await wait();
+  assert.equal(r2App.elements.latencyBadge.hidden, false, 'live RTT badge lights up upon connection');
+  assert.match(r2App.elements.latencyBadge.textContent, /^\d+ ms$/, 'RTT badge formats millisecond telemetry');
+  assert.equal(r2App.elements.latencyBadge.getAttribute('aria-live'), 'off', 'passive RTT telemetry never spams screen readers');
+  assert(['good', 'fair', 'slow'].includes(r2App.elements.latencyBadge.getAttribute('data-tier')), 'RTT badge assigns a semantic latency tier');
+
+  r2App.elements.dragButton.click();
+  await settle(r2App);
+  assert.equal(r2App.elements.dragButton.getAttribute('aria-pressed'), 'true');
+  r2App.records.length = 0;
+  r2App.elements.touchpad.emit('pointerdown', {pointerId: 801, pointerType: 'touch', clientX: 60, clientY: 100, timeStamp: 300});
+  r2App.elements.touchpad.emit('pointerdown', {pointerId: 802, pointerType: 'touch', clientX: 95, clientY: 108, timeStamp: 306});
+  r2App.elements.touchpad.emit('pointerdown', {pointerId: 803, pointerType: 'touch', clientX: 130, clientY: 114, timeStamp: 312});
+  r2App.elements.touchpad.emit('pointerup', {pointerId: 801, clientX: 61, clientY: 101, timeStamp: 360});
+  r2App.elements.touchpad.emit('pointerup', {pointerId: 802, clientX: 95, clientY: 108, timeStamp: 364});
+  r2App.elements.touchpad.emit('pointerup', {pointerId: 803, clientX: 130, clientY: 114, timeStamp: 368});
+  await settle(r2App);
+  assert.deepEqual(r2App.records.map(r => r.command), ['MC'], 'three-finger tap sends clean MC without spurious scroll');
+  assert.equal(r2App.elements.dragButton.getAttribute('aria-pressed'), 'false', 'three-finger middle-click clears active drag state');
+
+  // B. Swipe-down on #sheetGrip snaps back on short drag and dismisses #connectionPanel past threshold.
+  r2App.elements.connectionButton.click();
+  assert.equal(r2App.elements.connectionPanel.hidden, false);
+  r2App.elements.sheetGrip.emit('pointerdown', {pointerId: 810, pointerType: 'touch', clientY: 200});
+  r2App.elements.sheetGrip.emit('pointermove', {pointerId: 810, clientY: 218});
+  assert.match(r2App.elements.connectionPanel.style.transform, /translate3d\(0, 18px, 0\)/, 'sheet follows finger downward on compositor transform');
+  r2App.elements.sheetGrip.emit('pointerup', {pointerId: 810, clientY: 218});
+  assert.equal(r2App.elements.connectionPanel.hidden, false, 'short swipe (<36px) snaps sheet back open');
+  assert.equal(r2App.elements.connectionPanel.style.transform, '', 'snap-back clears inline transform');
+
+  r2App.elements.sheetGrip.emit('pointerdown', {pointerId: 811, pointerType: 'touch', clientY: 200});
+  r2App.elements.sheetGrip.emit('pointermove', {pointerId: 811, clientY: 252});
+  r2App.elements.sheetGrip.emit('pointerup', {pointerId: 811, clientY: 252});
+  assert.equal(r2App.elements.connectionPanel.hidden, true, 'downward swipe >=36px dismisses connection sheet');
+  assert.equal(r2App.elements.connectionButton.getAttribute('aria-expanded'), 'false');
+
+  // C. One-tap pointer speed presets & #speedValue tap-to-cycle sync aria-pressed and slider.
+  const presetBtns = r2App.elements.speedPresets.querySelectorAll('button');
+  assert.equal(presetBtns.length, 3);
+  assert.deepEqual(presetBtns.map(b => b.getAttribute('aria-pressed')), ['false', 'true', 'false'], 'default 1.4x preset starts pressed');
+  presetBtns[2].click();
+  assert.equal(r2App.elements.sensitivity.value, '2.2');
+  assert.equal(r2App.elements.speedValue.textContent, '2.2×');
+  assert.deepEqual(presetBtns.map(b => b.getAttribute('aria-pressed')), ['false', 'false', 'true'], '2.2x preset updates aria-pressed');
+  r2App.elements.speedValue.click();
+  assert.equal(r2App.elements.sensitivity.value, '0.8', 'tapping speedValue cycles 2.2x -> 0.8x');
+  assert.deepEqual(presetBtns.map(b => b.getAttribute('aria-pressed')), ['true', 'false', 'false']);
+
+  // D. Offline/disconnect clears RTT badge immediately so stale telemetry never lingers.
+  r2App.window.emit('offline');
+  assert.equal(r2App.elements.latencyBadge.hidden, true, 'offline hides RTT badge');
+  assert.equal(r2App.elements.latencyBadge.textContent, '');
+
+  console.log('PASS: mouse/keyboard/performance regressions, two-finger RC, three-finger MC, kinetic scroll, shortcut/media toolbars, hold-to-repeat, wake lock, live RTT badge, sheet swipe-down, speed presets, 8-way D-pad & multi-player native sessions.');
 })().catch(error => {console.error(error); process.exitCode = 1;});

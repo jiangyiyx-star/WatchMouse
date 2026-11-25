@@ -90,7 +90,9 @@ class InputController(BaseController):
                 kind, button = {2:(q.kCGEventLeftMouseDown,q.kCGMouseButtonLeft),
                                 4:(q.kCGEventLeftMouseUp,q.kCGMouseButtonLeft),
                                 8:(q.kCGEventRightMouseDown,q.kCGMouseButtonRight),
-                                16:(q.kCGEventRightMouseUp,q.kCGMouseButtonRight)}[flags]
+                                16:(q.kCGEventRightMouseUp,q.kCGMouseButtonRight),
+                                32:(q.kCGEventOtherMouseDown,q.kCGMouseButtonCenter),
+                                64:(q.kCGEventOtherMouseUp,q.kCGMouseButtonCenter)}[flags]
                 event = q.CGEventCreateMouseEvent(None, kind, location, button)
             self._post(event)
 

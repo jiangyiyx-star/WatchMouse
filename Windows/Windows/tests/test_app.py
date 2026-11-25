@@ -309,6 +309,41 @@ class AppPerformanceTests(unittest.TestCase):
         self.assertEqual("复制连接链接", app.copy_button["text"])
         self.assertEqual(desktop.BORDER, app.link_entry["highlightbackground"])
 
+    def test_telemetry_shows_connected_client_ip_and_localizes(self):
+        app = self.app()
+        fake_pool = types.SimpleNamespace(available=True, _closed=False, _sessions={"s1": {}})
+        app.server = types.SimpleNamespace(command_count=42, last_client="192.168.1.88", pad_pool=fake_pool)
+        app.events.put(("started", {"app": "WatchMouse", "paired": True, "commandCount": 42, "lastClient": "192.168.1.88", "nativeGamepad": True, "activeGamepads": 1, "maxGamepads": 4}))
+        app.poll_events()
+        self.assertEqual("Native pad (1/4) · 42 actions · 192.168.1.88", app.telemetry_var.get())
+        app.language_var.set("中文")
+        app.change_language()
+        self.assertEqual("原生手柄 (1/4) · 已响应 42 次 · 192.168.1.88", app.telemetry_var.get())
+        fake_pool.available = False
+        app.poll_events()
+        self.assertEqual("键盘手柄映射 · 已响应 42 次 · 192.168.1.88", app.telemetry_var.get())
+
+    def test_copy_key_button_and_ctrl_c_shortcut_respect_entry_focus(self):
+        app = self.app()
+        app.link_var.set("http://192.168.1.10:53514/?token=TEST")
+        app.root.scheduled.clear()
+        app.copy_key()
+        self.assertEqual("✓ Key copied", app.copy_key_button["text"])
+        app.language_var.set("中文")
+        app.change_language()
+        self.assertEqual("✓ 已复制配对码", app.copy_key_button["text"])
+        delay, reset_key_cb = app.root.scheduled[-1]
+        self.assertEqual(1600, delay)
+        reset_key_cb()
+        self.assertEqual("复制配对码", app.copy_key_button["text"])
+
+        # Ctrl+C yields to native Entry selection copy when link_entry has a selection, otherwise copies link.
+        app.link_entry.selection_present = lambda: True
+        self.assertIsNone(app._shortcut_copy_link(types.SimpleNamespace(widget=app.link_entry)))
+        app.link_entry.selection_present = lambda: False
+        self.assertEqual("break", app._shortcut_copy_link(types.SimpleNamespace(widget=app.root)))
+        self.assertEqual("✓ 已复制连接链接", app.copy_button["text"])
+
 
 # Save the method before setUp patches it so QR tests can exercise its real logic.
 REAL_UPDATE_LINK = desktop.WatchMouseApp.update_link

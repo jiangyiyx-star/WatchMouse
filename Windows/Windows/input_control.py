@@ -174,10 +174,10 @@ class InputController:
             if abs(amount) > 100:
                 raise ValueError("单次滚动过大")
             self.send(mouse(data=amount * 120, flags=0x0800))
-        elif command in ("C", "RC"):
+        elif command in ("C", "RC", "MC"):
             if self.dragging:
                 self.release_all()
-            down, up = (0x0002, 0x0004) if command == "C" else (0x0008, 0x0010)
+            down, up = {"C": (0x0002, 0x0004), "RC": (0x0008, 0x0010), "MC": (0x0020, 0x0040)}[command]
             self.send(mouse(flags=down), mouse(flags=up))
         elif command == "MD":
             if not self.dragging:

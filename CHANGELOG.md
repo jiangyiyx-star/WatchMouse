@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.0 — 2026-11-14
+
+- **Round 1 — Kinetic smoothness & everyday productivity:**
+  - Inertial/kinetic scroll coasting (`requestAnimationFrame` momentum decay) on brisk scroll-rail and two-finger touchpad flicks, stopping immediately on touch-down, discrete commands, mode switch, or backgrounding.
+  - Desktop quick-shortcut toolbar (`Esc`, `Tab`, `Ctrl/Cmd+Z`, `Ctrl/Cmd+A`, `Ctrl/Cmd+C`, `Ctrl/Cmd+V`, `←`, `→`) with `role="toolbar"`, `focusgroup="toolbar wrap"`, roving-tabindex fallback, and a one-tap clear-draft button in keyboard mode.
+  - Press-and-hold auto-repeat (`380 ms` initial delay, `60 ms` cadence, duplicate release-click suppression) on draft/computer Backspace, scroll step buttons, cursor arrows, and media seek buttons.
+  - Media utility toolbar (`-5s`, `+5s`, `Mute (M)`, `Fullscreen (F)`, `Esc`) in video mode and automatic Screen Wake Lock (`navigator.wakeLock`) while connected in the foreground.
+- **Round 2 — Cross-platform middle-click, live telemetry & launcher ergonomics:**
+  - Cross-platform three-finger tap middle-click (`MC`) across the phone touchpad, Windows `SendInput`, and macOS Quartz (`kCGMouseButtonCenter`) — open links in new tabs or close tabs without leaving the touchpad.
+  - Live Wi-Fi RTT latency pill (`#latencyBadge`, EWMA-smoothed milliseconds with semantic `good`/`fair`/`slow` tiers and `aria-live="off"`), swipe-down-on-grip (`#sheetGrip`) bottom-sheet dismissal, and one-tap pointer speed presets (`0.8×` / `1.4×` / `2.2×` + tap `#speedValue` to cycle).
+  - Windows desktop launcher improvements: connected client IP display in live telemetry, one-click **Copy pairing key** button with tactile confirmation, clickable QR code to copy the connection link, and `Ctrl+C` window shortcut (preserving native `Entry` selection copy).
+
 ## 2.9 — 2026-11-13
 
 - Lower latency & compositor-first touch pipeline: 8 ms (~120 Hz) motion batching, `event.getCoalescedEvents()` high-refresh touch sampling, velocity-aware `pointerGain` flick acceleration, once-per-gesture `getBoundingClientRect()` caching across touchpad/sticks/D-pad/mini-trackpad, GPU `translate3d(...)` indicators, immediate native gamepad button dispatch, 12 ms (~83 Hz) analog stick cadence, and `(st_mtime_ns, st_size)` RAM-cached static assets in `receiver.py`.
